@@ -1,0 +1,27 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environments
+.venv/
+venv/
+ENV/
+env/
+
+# Testing cache
+.pytest_cache/
+coverage/
+
+# Build artifacts
+node_modules/
+build/
+dist/
+
+# OS and logs
+.DS_Store
+*.log
+
+# Environment variables
+.env*
+!.env.example

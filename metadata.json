@@ -1,0 +1,6 @@
+{
+  "name": "Hotel Booking FP System",
+    "description": "Functional Python coursework for Hotel & Room Booking System with pure functions, immutability, and higher-order function pipelines.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

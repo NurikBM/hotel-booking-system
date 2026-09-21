@@ -1,0 +1,12 @@
+{
+  "name": "hotel-booking-fp",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Hotel & Room Booking System in Pure Functional Python with Streamlit",
+  "scripts": {
+    "dev": "python3 -m streamlit run streamlit_app.py --server.port 3000 --server.address 0.0.0.0 --server.headless true --server.enableCORS false --server.enableXsrfProtection false",
+    "build": "echo 'Python Streamlit App Ready'",
+    "start": "python3 -m streamlit run streamlit_app.py --server.port 3000 --server.address 0.0.0.0 --server.headless true --server.enableCORS false --server.enableXsrfProtection false",
+    "test": "python3 -m pytest -v tests/test_labs.py"
+  }
+}
