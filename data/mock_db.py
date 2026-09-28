@@ -1,16 +1,15 @@
 """Mock In-Memory Database: Sample immutable data for development and testing.
 
-Coursework Lab 1: Sample domain instances.
-All records are instantiated as immutable dataclasses.
-Returns immutable tuples or deep copies to protect against unexpected mutations.
+Coursework Lab 1 & Lab 2: Sample domain instances and hierarchical tree structures.
+All records are instantiated as immutable dataclasses with tuple collections.
 """
 
 from __future__ import annotations
 
 from datetime import date, datetime
-from domain.models import Booking, Hotel, Review, Room
+from domain.models import Booking, City, DiscountNode, Hotel, HotelNode, Review, Room
 
-# Sample Hotels
+# Sample Hotels (Lab 1)
 SAMPLE_HOTELS: tuple[Hotel, ...] = (
     Hotel(
         id="h1",
@@ -38,7 +37,7 @@ SAMPLE_HOTELS: tuple[Hotel, ...] = (
     ),
 )
 
-# Sample Rooms
+# Sample Rooms (Lab 1)
 SAMPLE_ROOMS: tuple[Room, ...] = (
     Room(
         id="r101",
@@ -90,7 +89,7 @@ SAMPLE_ROOMS: tuple[Room, ...] = (
     ),
 )
 
-# Sample Bookings
+# Sample Bookings (Lab 1)
 SAMPLE_BOOKINGS: tuple[Booking, ...] = (
     Booking(
         id="b1",
@@ -139,7 +138,7 @@ SAMPLE_BOOKINGS: tuple[Booking, ...] = (
     ),
 )
 
-# Sample Reviews
+# Sample Reviews (Lab 1)
 SAMPLE_REVIEWS: tuple[Review, ...] = (
     Review(
         id="rev1",
@@ -171,6 +170,58 @@ SAMPLE_REVIEWS: tuple[Review, ...] = (
     ),
 )
 
+# Sample Hierarchical City -> Hotels -> Rooms structure (Lab 2 Recursion)
+SAMPLE_CITIES: tuple[City, ...] = (
+    City(
+        name="Nice",
+        hotels=(
+            HotelNode(
+                id="h1",
+                name="Grand Azure Palace",
+                rating=4.8,
+                rooms=(SAMPLE_ROOMS[0], SAMPLE_ROOMS[1]),  # r101 ($220, cap 2), r102 ($550, cap 4)
+            ),
+        ),
+    ),
+    City(
+        name="Chamonix",
+        hotels=(
+            HotelNode(
+                id="h2",
+                name="Alpine Pine Retreat",
+                rating=4.6,
+                rooms=(SAMPLE_ROOMS[2], SAMPLE_ROOMS[3]),  # r201 ($130, cap 2), r202 ($310, cap 5)
+            ),
+        ),
+    ),
+    City(
+        name="Paris",
+        hotels=(
+            HotelNode(
+                id="h3",
+                name="Lumiere City Center Hotel",
+                rating=4.2,
+                rooms=(SAMPLE_ROOMS[4], SAMPLE_ROOMS[5]),  # r301 ($85, cap 1), r302 ($145, cap 2)
+            ),
+        ),
+    ),
+)
+
+# Sample Recursive Discount Structure (Lab 2 Recursion)
+SAMPLE_DISCOUNT_TREE = DiscountNode(
+    name="Holiday Promotion",
+    percentage=10.0,
+    sub_discounts=(
+        DiscountNode(
+            name="Loyalty Tier",
+            percentage=5.0,
+            sub_discounts=(
+                DiscountNode(name="Early Bird", percentage=2.0),
+            ),
+        ),
+    ),
+)
+
 
 def get_sample_hotels() -> list[Hotel]:
     """Return a fresh list of sample Hotel records."""
@@ -190,3 +241,13 @@ def get_sample_bookings() -> list[Booking]:
 def get_sample_reviews() -> list[Review]:
     """Return a fresh list of sample Review records."""
     return list(SAMPLE_REVIEWS)
+
+
+def get_sample_cities() -> tuple[City, ...]:
+    """Return the immutable hierarchical City -> Hotels -> Rooms structure."""
+    return SAMPLE_CITIES
+
+
+def get_sample_discount_tree() -> DiscountNode:
+    """Return the nested discount hierarchy."""
+    return SAMPLE_DISCOUNT_TREE

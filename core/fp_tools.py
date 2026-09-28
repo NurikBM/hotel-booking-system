@@ -1,185 +1,248 @@
-"""Functional Programming Tools & Pipelines: map, filter, reduce.
+"""Functional Programming Tools: Closures, Lambdas, and Recursive Algorithms.
 
-Coursework Lab 1: Higher-Order Functions (HOF) & Functional Pipelines.
-Demonstrates:
-  1. `map` to project or transform data structures immutably.
-  2. `filter` to selectively filter elements based on pure predicates.
-  3. `reduce` (from functools) to aggregate collections down to a single value
-     (such as calculating total revenue or finding extreme values).
+Coursework Lab 2:
+  1. Closure-based filter factories (`make_price_filter`, `make_amenity_filter`).
+  2. Lambdas for sorting and transformations.
+  3. Recursive Algorithm 1: Aggregation of City -> Hotels -> Rooms hierarchical structure.
+  4. Recursive Algorithm 2: Recursive search / nested discount parsing.
 """
 
 from __future__ import annotations
 
-from functools import reduce
-from typing import Any, Callable, Iterable, TypeVar
-from domain.models import Booking, Hotel, Room
-
-T = TypeVar("T")
-U = TypeVar("U")
-V = TypeVar("V")
-
-
-def compose(f: Callable[[U], V], g: Callable[[T], U]) -> Callable[[T], V]:
-    """Compose two unary functions: (f ∘ g)(x) = f(g(x)).
-
-    OVERVIEW:
-    Mathematical function composition. Takes functions f and g,
-    and produces a new function that applies g first, then f to the result.
-    """
-    return lambda x: f(g(x))
+from typing import Any, Callable, Iterable
+from core.filters import is_room_in_price_range
+from core.pricing import apply_discount
+from domain.models import City, DiscountNode, Hotel, HotelNode, Room
 
 
 # ============================================================================
-# MAP PIPELINES
+# 1. CLOSURES & FUNCTION FACTORIES (LAB 2)
 # ============================================================================
 
 
-def extract_hotel_names(hotels: Iterable[Hotel]) -> list[str]:
-    """Extract a list of hotel names using `map`.
+def make_price_filter(min_p: float, max_p: float) -> Callable[[Room], bool]:
+    """Create a closure-based room filter by price range.
 
-    OVERVIEW:
-    Demonstrates `map`: projects each Hotel entity to its string `name`
-    attribute without modifying any Hotel entity.
+    The returned function captures `min_p` and `max_p` in its closure scope
+    and reuses the pure `is_room_in_price_range` predicate from Lab 1.
 
     Args:
-        hotels: Iterable of Hotel entities.
+        min_p: Minimum allowable room base price.
+        max_p: Maximum allowable room base price.
 
     Returns:
-        List of hotel names.
+        Predicate function `Room -> bool`.
     """
-    return list(map(lambda h: h.name, hotels))
+
+    def price_filter(room: Room) -> bool:
+        return is_room_in_price_range(room, min_p, max_p)
+
+    return price_filter
 
 
-def transform_rooms_with_multiplier(
+def make_amenity_filter(required: str) -> Callable[[Room], bool]:
+    """Create a closure-based room filter checking for a required amenity.
+
+    The returned predicate captures normalized `required` in its closure scope
+    and checks membership against the room's immutable amenities tuple.
+
+    Args:
+        required: Name of the amenity (case-insensitive).
+
+    Returns:
+        Predicate function `Room -> bool`.
+    """
+    normalized_target = required.strip().lower()
+
+    def amenity_filter(room: Room) -> bool:
+        return any(a.strip().lower() == normalized_target for a in room.amenities)
+
+    return amenity_filter
+
+
+# ============================================================================
+# 2. LAMBDAS IN PIPELINES (LAB 2)
+# ============================================================================
+
+
+def sort_rooms_by_price(
     rooms: Iterable[Room],
-    multiplier: float,
+    descending: bool = False,
 ) -> list[Room]:
-    """Produce a new list of Room entities with prices adjusted by a multiplier.
-
-    OVERVIEW:
-    Demonstrates pure immutable transformation via `map`. Each Room is
-    transformed into a brand NEW Room instance with updated `base_price`.
-    The original Room instances remain completely unaltered.
+    """Sort rooms using a pure lambda key extractor.
 
     Args:
-        rooms: Iterable of Room instances.
-        multiplier: Price multiplier (e.g. 1.10 for +10%).
+        rooms: Sequence of Room instances.
+        descending: True for highest-to-lowest price order.
 
     Returns:
-        New list of Room instances with new prices.
+        New sorted list of Room instances.
     """
-    transform_room: Callable[[Room], Room] = lambda r: Room(
-        id=r.id,
-        hotel_id=r.hotel_id,
-        room_type=r.room_type,
-        base_price=round(r.base_price * multiplier, 2),
-        capacity=r.capacity,
-        amenities=r.amenities,
-    )
-    return list(map(transform_room, rooms))
+    return sorted(rooms, key=lambda r: r.base_price, reverse=descending)
 
 
-def extract_unique_hotel_amenities(hotels: Iterable[Hotel]) -> set[str]:
-    """Aggregate all distinct amenities across all hotels.
+def sort_hotels_by_rating(
+    hotels: Iterable[Hotel],
+    descending: bool = True,
+) -> list[Hotel]:
+    """Sort hotels using a pure lambda key extractor.
 
-    OVERVIEW:
-    Functional pipeline combining `map` and `reduce` (union of sets).
-    Each hotel's amenities tuple is mapped to a set, then folded with `reduce`.
+    Args:
+        hotels: Sequence of Hotel instances.
+        descending: True for highest-to-lowest rating order.
+
+    Returns:
+        New sorted list of Hotel instances.
     """
-    amenity_sets = map(lambda h: set(h.amenities), hotels)
-    return reduce(lambda acc, current: acc | current, amenity_sets, set())
+    return sorted(hotels, key=lambda h: h.rating, reverse=descending)
 
 
 # ============================================================================
-# FILTER PIPELINES
+# 3. RECURSIVE ALGORITHM 1: HIERARCHY AGGREGATION (LAB 2)
 # ============================================================================
 
 
-def find_affordable_rooms(rooms: Iterable[Room], max_budget: float) -> list[Room]:
-    """Filter rooms whose nightly base price does not exceed `max_budget`.
+def recursive_count_rooms(node: City | HotelNode | tuple[Any, ...]) -> int:
+    """Recursively count total rooms in a City -> Hotels -> Rooms structure.
 
-    OVERVIEW:
-    Demonstrates `filter` with a pure predicate lambda `r.base_price <= max_budget`.
+    Recursion Idea:
+      - Base case 1: empty tuple or None -> 0.
+      - Base case 2: single Room instance -> 1.
+      - Recursive step:
+        - If City: delegate to node.hotels.
+        - If HotelNode: delegate to node.rooms.
+        - If tuple: count of first element + recursive count of remaining elements (tail).
     """
-    return list(filter(lambda r: r.base_price <= max_budget, rooms))
+    if not node:
+        return 0
+    if isinstance(node, Room):
+        return 1
+    if isinstance(node, HotelNode):
+        return recursive_count_rooms(node.rooms)
+    if isinstance(node, City):
+        return recursive_count_rooms(node.hotels)
+    if isinstance(node, tuple):
+        # Base case for empty tail handled automatically
+        return recursive_count_rooms(node[0]) + recursive_count_rooms(node[1:])
+    return 0
 
 
-def find_rooms_by_type(rooms: Iterable[Room], target_type: str) -> list[Room]:
-    """Filter rooms matching a specific room type (e.g. 'Suite', 'Deluxe').
+def recursive_sum_capacity(node: City | HotelNode | tuple[Any, ...]) -> int:
+    """Recursively sum total guest capacity in a City -> Hotels -> Rooms structure.
 
-    OVERVIEW:
-    Pure predicate filter comparing normalized room types.
+    Recursion Idea:
+      - Base case 1: empty tuple or None -> 0.
+      - Base case 2: single Room instance -> room.capacity.
+      - Recursive step:
+        - If City: delegate to node.hotels.
+        - If HotelNode: delegate to node.rooms.
+        - If tuple: capacity of first element + recursive sum of remaining elements (tail).
     """
-    normalized = target_type.strip().lower()
-    return list(filter(lambda r: r.room_type.strip().lower() == normalized, rooms))
+    if not node:
+        return 0
+    if isinstance(node, Room):
+        return node.capacity
+    if isinstance(node, HotelNode):
+        return recursive_sum_capacity(node.rooms)
+    if isinstance(node, City):
+        return recursive_sum_capacity(node.hotels)
+    if isinstance(node, tuple):
+        return recursive_sum_capacity(node[0]) + recursive_sum_capacity(node[1:])
+    return 0
+
+
+def recursive_aggregate_city(city: City) -> dict[str, int]:
+    """Recursively aggregate metrics (room count, total guest capacity) for a City.
+
+    Evaluates the City -> Hotels -> Rooms tree without iterative loops.
+    """
+    return {
+        "room_count": recursive_count_rooms(city),
+        "total_capacity": recursive_sum_capacity(city),
+    }
+
+
+def recursive_aggregate_cities(cities: tuple[City, ...]) -> dict[str, int]:
+    """Recursively aggregate metrics across multiple City nodes.
+
+    Recursion Idea:
+      - Base case: empty tuple of cities -> 0 rooms, 0 capacity.
+      - Recursive step: aggregate first city + recursively aggregate remaining cities.
+    """
+    if not cities:
+        return {"room_count": 0, "total_capacity": 0}
+
+    first_city_agg = recursive_aggregate_city(cities[0])
+    rest_agg = recursive_aggregate_cities(cities[1:])
+
+    return {
+        "room_count": first_city_agg["room_count"] + rest_agg["room_count"],
+        "total_capacity": first_city_agg["total_capacity"] + rest_agg["total_capacity"],
+    }
 
 
 # ============================================================================
-# REDUCE PIPELINES
+# 4. RECURSIVE ALGORITHM 2: HIERARCHY SEARCH & DISCOUNT PARSING (LAB 2)
 # ============================================================================
 
 
-def calculate_total_revenue(bookings: Iterable[Booking]) -> float:
-    """Calculate the sum of all confirmed booking total prices using `reduce`.
+def recursive_find_cheapest_room(
+    node: City | HotelNode | tuple[Any, ...],
+) -> Room | None:
+    """Recursively search for the room with lowest base price in a tree structure.
 
-    OVERVIEW:
-    Demonstrates `reduce`:
-      accumulates (accumulator + booking.total_price) starting from 0.0.
-    Only takes into account bookings whose status is not 'CANCELLED'.
-
-    Args:
-        bookings: Iterable of Booking instances.
-
-    Returns:
-        Sum of revenue rounded to 2 decimal places.
+    Recursion Idea:
+      - Base case 1: empty tuple or None -> None.
+      - Base case 2: single Room instance -> return the room.
+      - Recursive step:
+        - If City: delegate to node.hotels.
+        - If HotelNode: delegate to node.rooms.
+        - If tuple: find cheapest in head (node[0]) and cheapest in tail (node[1:]),
+          then return the one with smaller base_price.
     """
-    confirmed_bookings = filter(lambda b: b.status.upper() != "CANCELLED", bookings)
-    total = reduce(lambda acc, b: acc + b.total_price, confirmed_bookings, 0.0)
-    return round(total, 2)
-
-
-def calculate_average_hotel_rating(hotels: Iterable[Hotel]) -> float:
-    """Compute the average rating across a collection of hotels using `reduce`.
-
-    OVERVIEW:
-    Demonstrates `reduce` by accumulating ratings:
-      sum_ratings = reduce(lambda acc, h: acc + h.rating, hotels, 0.0)
-      average = sum_ratings / count
-
-    Args:
-        hotels: Iterable of Hotel entities.
-
-    Returns:
-        Average rating (0.0 if empty), rounded to 2 decimal places.
-    """
-    hotel_list = list(hotels)
-    if not hotel_list:
-        return 0.0
-
-    total_rating = reduce(lambda acc, h: acc + h.rating, hotel_list, 0.0)
-    return round(total_rating / len(hotel_list), 2)
-
-
-def find_cheapest_room(rooms: Iterable[Room]) -> Room | None:
-    """Find the room with the lowest base price using `reduce`.
-
-    OVERVIEW:
-    Demonstrates folding a collection to find the extremum (minimum element)
-    purely through `reduce` without stateful external variables.
-
-    Args:
-        rooms: Iterable of Room entities.
-
-    Returns:
-        The Room with the lowest base_price, or None if the collection is empty.
-    """
-    room_list = list(rooms)
-    if not room_list:
+    if not node:
         return None
+    if isinstance(node, Room):
+        return node
+    if isinstance(node, HotelNode):
+        return recursive_find_cheapest_room(node.rooms)
+    if isinstance(node, City):
+        return recursive_find_cheapest_room(node.hotels)
+    if isinstance(node, tuple):
+        first = recursive_find_cheapest_room(node[0])
+        rest = recursive_find_cheapest_room(node[1:])
+        if first is None:
+            return rest
+        if rest is None:
+            return first
+        return first if first.base_price <= rest.base_price else rest
+    return None
 
-    return reduce(
-        lambda cheapest, current: (
-            current if current.base_price < cheapest.base_price else cheapest
-        ),
-        room_list,
-    )
+
+def recursive_calculate_discount(
+    base_price: float,
+    discount: DiscountNode,
+) -> float:
+    """Recursively parse and apply a nested discount hierarchy.
+
+    Reuses Lab 1 pure `apply_discount` without mutating data or using loops.
+
+    Recursion Idea:
+      - Base case: discount has no sub_discounts -> apply discount.percentage.
+      - Recursive step: apply current discount, then fold through sub_discounts recursively.
+    """
+    current_price = apply_discount(base_price, discount.percentage)
+    if not discount.sub_discounts:
+        return current_price
+
+    def _apply_sub_discounts(
+        price: float,
+        subs: tuple[DiscountNode, ...],
+    ) -> float:
+        if not subs:
+            return price
+        # Recurse on head sub_discount, then pass result to remaining sub_discounts
+        new_price = recursive_calculate_discount(price, subs[0])
+        return _apply_sub_discounts(new_price, subs[1:])
+
+    return _apply_sub_discounts(current_price, discount.sub_discounts)

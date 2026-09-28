@@ -1,16 +1,15 @@
 """Domain Models: Hotel & Room Booking System.
 
-Coursework Lab 1: Pure functional domain entities.
-All domain entities are strictly immutable (@dataclass(frozen=True)).
-Immutability guarantees thread safety, prevents unexpected side-effects,
-and supports pure functional transformations.
+Coursework Lab 1 & Lab 2: Immutable domain entities.
+All domain entities are declared as `@dataclass(frozen=True)` without custom __init__.
+Immutability guarantees thread safety, prevents unexpected side effects,
+and enforces pure functional programming principles.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime
-from typing import Sequence
 
 
 @dataclass(frozen=True)
@@ -22,7 +21,7 @@ class Hotel:
         name: Name of the hotel.
         location: City or area location.
         rating: Average customer rating (0.0 - 5.0).
-        amenities: Tuple of provided amenities (e.g. 'WiFi', 'Pool').
+        amenities: Tuple of provided amenities.
         room_ids: Tuple of room identifiers belonging to this hotel.
     """
 
@@ -32,23 +31,6 @@ class Hotel:
     rating: float
     amenities: tuple[str, ...]
     room_ids: tuple[str, ...]
-
-    def __init__(
-        self,
-        id: str,
-        name: str,
-        location: str,
-        rating: float,
-        amenities: Sequence[str] = (),
-        room_ids: Sequence[str] = (),
-    ) -> None:
-        """Initialize Hotel and enforce tuple conversion for deep immutability."""
-        object.__setattr__(self, "id", str(id))
-        object.__setattr__(self, "name", str(name))
-        object.__setattr__(self, "location", str(location))
-        object.__setattr__(self, "rating", float(rating))
-        object.__setattr__(self, "amenities", tuple(amenities))
-        object.__setattr__(self, "room_ids", tuple(room_ids))
 
 
 @dataclass(frozen=True)
@@ -61,7 +43,7 @@ class Room:
         room_type: Category (e.g. 'Standard', 'Deluxe', 'Suite').
         base_price: Nightly base rate in USD.
         capacity: Maximum guest capacity.
-        amenities: Tuple of specific room amenities (e.g. 'Balcony', 'AC').
+        amenities: Tuple of specific room amenities.
     """
 
     id: str
@@ -70,23 +52,6 @@ class Room:
     base_price: float
     capacity: int
     amenities: tuple[str, ...]
-
-    def __init__(
-        self,
-        id: str,
-        hotel_id: str,
-        room_type: str,
-        base_price: float,
-        capacity: int,
-        amenities: Sequence[str] = (),
-    ) -> None:
-        """Initialize Room and enforce tuple conversion for deep immutability."""
-        object.__setattr__(self, "id", str(id))
-        object.__setattr__(self, "hotel_id", str(hotel_id))
-        object.__setattr__(self, "room_type", str(room_type))
-        object.__setattr__(self, "base_price", float(base_price))
-        object.__setattr__(self, "capacity", int(capacity))
-        object.__setattr__(self, "amenities", tuple(amenities))
 
 
 @dataclass(frozen=True)
@@ -129,3 +94,30 @@ class Review:
     rating: float
     comment: str
     timestamp: datetime
+
+
+@dataclass(frozen=True)
+class HotelNode:
+    """Hotel node holding nested rooms for recursive hierarchy processing."""
+
+    id: str
+    name: str
+    rating: float
+    rooms: tuple[Room, ...]
+
+
+@dataclass(frozen=True)
+class City:
+    """City node holding nested hotels for recursive hierarchy processing."""
+
+    name: str
+    hotels: tuple[HotelNode, ...]
+
+
+@dataclass(frozen=True)
+class DiscountNode:
+    """Recursive discount structure: discount percentage and possible sub-discounts."""
+
+    name: str
+    percentage: float
+    sub_discounts: tuple[DiscountNode, ...] = ()
