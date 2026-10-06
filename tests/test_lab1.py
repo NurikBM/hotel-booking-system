@@ -1,190 +1,162 @@
-"""Unit & Functional Tests: Lab 1 — Pure Functions, Immutability, and HOF Pipelines.
+"""Unit tests for Lab 1: Immutable Domain Models & Functional Transformations.
 
-Tests verify:
-  1. Immutability of domain entities (frozen dataclass contracts).
-  2. Pure transformation functions (stay duration nights and pricing calculations).
-  3. Pure discount and quote calculations.
-  4. Predicate filters for rooms and hotels.
-  5. Higher-Order Functions: map transformations.
-  6. Higher-Order Functions: reduce aggregations (revenue, rating, cheapest room).
+Covers:
+  - Domain models immutability (frozen dataclasses)
+  - Seed loading (load_seed)
+  - Pure date operations (calculate_nights, generate_date_range)
+  - Nightly price reduction (nightly_sum)
+  - Immutable cart operations (hold_item, remove_hold, calculate_cart_total)
+  - Pure integer discount calculation (apply_discount)
 """
 
 from __future__ import annotations
 
-from dataclasses import FrozenInstanceError
-from datetime import date, datetime
+import dataclasses
+import os
+
 import pytest
 
-from core.filters import (
-    filter_hotels_by_location,
-    filter_hotels_by_min_rating,
-    filter_rooms_by_capacity,
-    filter_rooms_by_price,
-    is_room_in_price_range,
+from core.domain import (
+    Availability,
+    CartItem,
+    Guest,
+    Hotel,
+    Price,
+    RatePlan,
+    RoomType,
 )
-from core.pricing import (
+from core.transforms import (
     apply_discount,
-    calculate_average_hotel_rating,
+    calculate_cart_total,
     calculate_nights,
-    calculate_stay_quote,
-    calculate_total_price,
-    calculate_total_revenue,
-    extract_hotel_names,
-    find_cheapest_room,
-    transform_rooms_with_multiplier,
+    generate_date_range,
+    hold_item,
+    load_seed,
+    nightly_sum,
+    remove_hold,
 )
-from data.mock_db import (
-    get_sample_bookings,
-    get_sample_hotels,
-    get_sample_rooms,
-)
-from domain.models import Booking, Hotel, Room
 
 
-def test_domain_immutability() -> None:
-    """Verifies that domain entities are strictly immutable."""
-    room = Room(
-        id="r_test",
-        hotel_id="h_test",
-        room_type="Standard",
-        base_price=100.0,
-        capacity=2,
-        amenities=("WiFi", "AC"),
-    )
-
-    with pytest.raises(FrozenInstanceError):
-        room.base_price = 150.0  # type: ignore
-
+def test_domain_models_immutability():
+    """Verify that domain entities are immutable frozen dataclasses."""
     hotel = Hotel(
-        id="h_demo",
-        name="Seaside Inn",
-        location="Miami",
-        rating=4.5,
-        amenities=("WiFi", "Pool"),
-        room_ids=("r_test",),
+        id="h_test",
+        name="Test Hotel",
+        stars=4,
+        city="Almaty",
+        features=("wifi", "pool"),
     )
-    with pytest.raises(FrozenInstanceError):
-        hotel.rating = 5.0  # type: ignore
+    assert hotel.id == "h_test"
+    assert hotel.features == ("wifi", "pool")
 
-    booking = Booking(
-        id="b_demo",
-        room_id="r_test",
-        guest_name="Jane Doe",
-        check_in=date(2026, 5, 1),
-        check_out=date(2026, 5, 4),
-        total_price=300.0,
-        status="CONFIRMED",
+    # Attempting to mutate must raise FrozenInstanceError
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        hotel.name = "Modified Name"  # type: ignore[misc]
+
+
+def test_load_seed_structure():
+    """Verify load_seed loads realistic dataset into tuples of domain objects."""
+    seed_path = os.path.join(os.path.dirname(__file__), "..", "data", "seed.json")
+    hotels, rooms, rates, prices, avails, guests = load_seed(seed_path)
+
+    assert len(hotels) >= 5
+    assert len(rooms) >= 20
+    assert len(rates) >= 40
+    assert len(prices) >= 1000
+    assert len(avails) >= 500
+    assert len(guests) >= 50
+
+    assert all(isinstance(h, Hotel) for h in hotels)
+    assert all(isinstance(r, RoomType) for r in rooms)
+    assert all(isinstance(rp, RatePlan) for rp in rates)
+    assert all(isinstance(p, Price) for p in prices)
+    assert all(isinstance(a, Availability) for a in avails)
+    assert all(isinstance(g, Guest) for g in guests)
+
+    # Verify money is strictly int
+    assert all(isinstance(p.amount, int) for p in prices)
+
+
+def test_calculate_nights_and_date_range():
+    """Verify pure date calculations between ISO-8601 strings."""
+    assert calculate_nights("2026-06-01", "2026-06-04") == 3
+    assert calculate_nights("2026-06-15", "2026-06-16") == 1
+
+    dates = generate_date_range("2026-06-01", "2026-06-04")
+    assert dates == ("2026-06-01", "2026-06-02", "2026-06-03")
+
+    with pytest.raises(ValueError):
+        calculate_nights("2026-06-04", "2026-06-01")
+
+
+def test_nightly_sum_with_reduce():
+    """Verify nightly_sum aggregates amounts via reduce across the stay."""
+    prices = (
+        Price(date="2026-06-01", rate_id="rp_1", amount=1500000),
+        Price(date="2026-06-02", rate_id="rp_1", amount=1500000),
+        Price(date="2026-06-03", rate_id="rp_1", amount=1800000),
+        Price(date="2026-06-01", rate_id="rp_2", amount=9999999),
     )
-    with pytest.raises(FrozenInstanceError):
-        booking.status = "CANCELLED"  # type: ignore
+
+    total = nightly_sum(prices, "2026-06-01", "2026-06-04", "rp_1")
+    assert total == 1500000 + 1500000 + 1800000
+    assert total == 4800000
+    assert isinstance(total, int)
 
 
-def test_calculate_nights_pure() -> None:
-    """Tests date delta calculation for stay duration."""
-    d1 = date(2026, 6, 1)
-    d2 = date(2026, 6, 5)
-
-    assert calculate_nights(d1, d2) == 4
-    assert calculate_nights(d1, d1) == 0
-    # Guard against negative nights if dates are reversed
-    assert calculate_nights(d2, d1) == 0
+def test_nightly_sum_missing_date_raises_error():
+    """Verify nightly_sum raises ValueError when calendar data is incomplete."""
+    prices = (Price(date="2026-06-01", rate_id="rp_1", amount=1500000),)
+    with pytest.raises(ValueError, match="Missing price records"):
+        nightly_sum(prices, "2026-06-01", "2026-06-03", "rp_1")
 
 
-def test_calculate_total_price_pure() -> None:
-    """Tests total price with standard, peak, and low-season multipliers."""
-    # Standard season (1.0)
-    assert calculate_total_price(100.0, 3, seasonal_multiplier=1.0) == 300.0
-
-    # Peak season (+25% -> 1.25)
-    assert calculate_total_price(100.0, 3, seasonal_multiplier=1.25) == 375.0
-
-    # Low season (-15% -> 0.85)
-    assert calculate_total_price(120.0, 2, seasonal_multiplier=0.85) == 204.0
-
-    # Edge cases
-    assert calculate_total_price(100.0, 0, 1.25) == 0.0
-    assert calculate_total_price(0.0, 5, 1.0) == 0.0
-
-
-def test_apply_discount_and_stay_quote() -> None:
-    """Tests pure percentage discount and complete stay quote calculation."""
-    assert apply_discount(200.0, 10.0) == 180.0
-    assert apply_discount(150.0, 0.0) == 150.0
-    assert apply_discount(100.0, 100.0) == 0.0
-    assert apply_discount(100.0, -10.0) == 100.0
-    assert apply_discount(100.0, 150.0) == 0.0
-
-    room = Room("r1", "h1", "Deluxe", 200.0, 2, ("WiFi",))
-    quote = calculate_stay_quote(
-        room,
-        check_in=date(2026, 7, 1),
-        check_out=date(2026, 7, 4),
-        seasonal_multiplier=1.1,
-        discount_percent=10.0,
+def test_cart_hold_and_remove_immutability():
+    """Verify pure cart hold and remove operations preserve immutable state."""
+    item1 = CartItem(
+        id="c1",
+        guest_id="g1",
+        room_type_id="r1",
+        rate_id="rp1",
+        checkin="2026-06-01",
+        checkout="2026-06-03",
+        guests_count=2,
+        total_price=3000000,
     )
-    # 3 nights * $200 * 1.1 = $660.0; -10% discount = $594.0
-    assert quote == 594.0
+    item2 = CartItem(
+        id="c2",
+        guest_id="g1",
+        room_type_id="r2",
+        rate_id="rp2",
+        checkin="2026-06-05",
+        checkout="2026-06-07",
+        guests_count=1,
+        total_price=2500000,
+    )
+
+    cart0: tuple[CartItem, ...] = ()
+    cart1 = hold_item(cart0, item1)
+    cart2 = hold_item(cart1, item2)
+
+    assert cart0 == ()
+    assert len(cart1) == 1
+    assert len(cart2) == 2
+    assert calculate_cart_total(cart2) == 5500000
+
+    cart3 = remove_hold(cart2, "c1")
+    assert len(cart3) == 1
+    assert cart3[0].id == "c2"
+    assert len(cart2) == 2  # cart2 remains unchanged
 
 
-def test_pure_filtering_functions() -> None:
-    """Tests pure filtering of rooms and hotels without mutating input collections."""
-    rooms = get_sample_rooms()
-    original_count = len(rooms)
+def test_apply_discount_pure_integer_math():
+    """Verify discount application strictly uses integer math with cents."""
+    assert apply_discount(1000000, 10) == 900000
+    assert apply_discount(1000000, 0) == 1000000
+    assert apply_discount(1000000, 100) == 0
+    assert isinstance(apply_discount(1555555, 15), int)
 
-    filtered = filter_rooms_by_price(rooms, 100.0, 250.0)
-    assert len(rooms) == original_count
-    assert all(100.0 <= r.base_price <= 250.0 for r in filtered)
-    assert len(filtered) == 3
-
-    assert is_room_in_price_range(rooms[0], 200.0, 300.0) is True
-    assert is_room_in_price_range(rooms[0], 50.0, 100.0) is False
-
-    family_rooms = filter_rooms_by_capacity(rooms, min_capacity=4)
-    assert len(family_rooms) == 2
-    assert all(r.capacity >= 4 for r in family_rooms)
-
-    hotels = get_sample_hotels()
-    high_rated = filter_hotels_by_min_rating(hotels, min_rating=4.5)
-    assert len(high_rated) == 2
-
-    nice_hotels = filter_hotels_by_location(hotels, "Nice")
-    assert len(nice_hotels) == 1
-    assert nice_hotels[0].name == "Grand Azure Palace"
-
-
-def test_map_transformations() -> None:
-    """Tests map pipelines for projecting hotel names and adjusting room rates."""
-    hotels = get_sample_hotels()
-    names = extract_hotel_names(hotels)
-    assert names == [
-        "Grand Azure Palace",
-        "Alpine Pine Retreat",
-        "Lumiere City Center Hotel",
-    ]
-
-    rooms = get_sample_rooms()
-    original_prices = [r.base_price for r in rooms]
-    updated_rooms = transform_rooms_with_multiplier(rooms, 1.10)
-
-    # Original rooms untouched
-    assert [r.base_price for r in rooms] == original_prices
-    # Updated prices increased by 10%
-    for orig, updated in zip(rooms, updated_rooms):
-        assert updated.base_price == round(orig.base_price * 1.10, 2)
-
-
-def test_reduce_aggregations() -> None:
-    """Tests reduce folding for total revenue, average ratings, and cheapest room."""
-    bookings = get_sample_bookings()
-    # Confirmed: b1 (880.0), b2 (650.0), b3 (170.0), b5 (870.0) = 2570.0; b4 is CANCELLED
-    assert calculate_total_revenue(bookings) == 2570.0
-
-    hotels = get_sample_hotels()
-    # Ratings: 4.8, 4.6, 4.2 -> sum = 13.6 -> avg = 13.6 / 3 = 4.53
-    assert calculate_average_hotel_rating(hotels) == 4.53
-
-    rooms = get_sample_rooms()
-    cheapest = find_cheapest_room(rooms)
-    assert cheapest is not None
-    assert cheapest.id == "r301"
-    assert cheapest.base_price == 85.0
+    with pytest.raises(ValueError):
+        apply_discount(1000000, -5)
+    with pytest.raises(ValueError):
+        apply_discount(1000000, 105)

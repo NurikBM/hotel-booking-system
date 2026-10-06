@@ -1,154 +1,208 @@
-"""Unit & Functional Tests: Lab 2 — Closures, Lambdas, and Recursion.
+"""Unit tests for Lab 2: Closures, Lambdas, and Recursive Algorithms.
 
-Tests verify:
-  1. Closure-based filter factories (`make_price_filter`, `make_amenity_filter`).
-  2. Lambdas used for sorting and transformations.
-  3. Recursive Algorithm 1: Hierarchical aggregation of City -> Hotels -> Rooms.
-  4. Recursive Algorithm 2: Recursive search for cheapest room in hierarchy.
-  5. Recursive Algorithm 2: Recursive parsing and calculation of nested discount structures.
+Covers:
+  - Closures: by_city, by_capacity, by_features
+  - Lambda sorting functions
+  - Recursive Algorithm 1: Hierarchical quote search (recursive_search_available_quotes)
+  - Recursive Algorithm 2: Rule / discount engine (recursive_apply_rules)
+  - Recursive Extremum Search: recursive_find_cheapest_quote
 """
 
 from __future__ import annotations
 
-from core.fp_tools import (
-    make_amenity_filter,
-    make_price_filter,
-    recursive_aggregate_cities,
-    recursive_aggregate_city,
-    recursive_calculate_discount,
-    recursive_count_rooms,
-    recursive_find_cheapest_room,
-    recursive_sum_capacity,
-    sort_hotels_by_rating,
-    sort_rooms_by_price,
+import pytest
+
+from core.domain import Availability, Hotel, Price, RatePlan, RoomType, Rule
+from core.recursion import (
+    BookingQuote,
+    recursive_apply_rules,
+    recursive_find_cheapest_quote,
+    recursive_search_available_quotes,
 )
-from data.mock_db import (
-    get_sample_cities,
-    get_sample_discount_tree,
-    get_sample_hotels,
-    get_sample_rooms,
+from core.transforms import (
+    by_capacity,
+    by_city,
+    by_features,
+    by_price_range,
+    sort_hotels_by_stars,
+    sort_rooms_by_capacity,
 )
-from domain.models import City, DiscountNode, HotelNode, Room
 
 
-def test_closure_make_price_filter() -> None:
-    """Verifies make_price_filter produces a pure predicate closure."""
-    rooms = get_sample_rooms()
+def test_closure_by_price_range():
+    """Verify by_price_range closure filters Price instances within monetary boundaries."""
+    p1 = Price(date="2026-06-01", rate_id="rp1", amount=1500000)
+    p2 = Price(date="2026-06-01", rate_id="rp2", amount=2500000)
+    p3 = Price(date="2026-06-01", rate_id="rp3", amount=4000000)
 
-    # Create two distinct closures with their own lexical scopes
-    budget_filter = make_price_filter(50.0, 150.0)
-    luxury_filter = make_price_filter(250.0, 600.0)
+    filter_budget = by_price_range(1000000, 2000000, "KZT")
+    filter_mid = by_price_range(2000000, 3000000, "KZT")
 
-    budget_rooms = list(filter(budget_filter, rooms))
-    luxury_rooms = list(filter(luxury_filter, rooms))
+    assert filter_budget(p1) is True
+    assert filter_budget(p2) is False
+    assert filter_mid(p2) is True
+    assert filter_mid(p3) is False
 
-    assert len(budget_rooms) == 3
-    assert all(50.0 <= r.base_price <= 150.0 for r in budget_rooms)
-
-    assert len(luxury_rooms) == 2
-    assert all(250.0 <= r.base_price <= 600.0 for r in luxury_rooms)
-
-
-def test_closure_make_amenity_filter() -> None:
-    """Verifies make_amenity_filter produces an amenity-checking closure."""
-    rooms = get_sample_rooms()
-
-    balcony_filter = make_amenity_filter("Balcony")
-    fireplace_filter = make_amenity_filter("fireplace")  # Case-insensitive
-
-    balcony_rooms = list(filter(balcony_filter, rooms))
-    fireplace_rooms = list(filter(fireplace_filter, rooms))
-
-    assert len(balcony_rooms) == 3
-    assert all("Balcony" in r.amenities for r in balcony_rooms)
-
-    assert len(fireplace_rooms) == 1
-    assert fireplace_rooms[0].id == "r202"
+    with pytest.raises(ValueError):
+        by_price_range(5000000, 1000000)
 
 
-def test_lambdas_in_sorting() -> None:
-    """Verifies sorting functions utilizing lambda key extractors."""
-    rooms = get_sample_rooms()
-    sorted_asc = sort_rooms_by_price(rooms, descending=False)
-    sorted_desc = sort_rooms_by_price(rooms, descending=True)
+def test_closure_by_city():
+    """Verify by_city closure filters hotels case-insensitively."""
+    hotel1 = Hotel(id="h1", name="H1", stars=4, city="Almaty", features=())
+    hotel2 = Hotel(id="h2", name="H2", stars=5, city="Astana", features=())
 
-    assert sorted_asc[0].base_price <= sorted_asc[1].base_price
-    assert sorted_asc[0].id == "r301"  # $85.0
-    assert sorted_desc[0].id == "r102"  # $550.0
+    almaty_filter = by_city("almaty")
+    astana_filter = by_city("ASTANA")
+    other_filter = by_city("Shymkent")
 
-    hotels = get_sample_hotels()
-    sorted_hotels = sort_hotels_by_rating(hotels, descending=True)
-    assert sorted_hotels[0].rating == 4.8
-    assert sorted_hotels[-1].rating == 4.2
+    assert almaty_filter(hotel1) is True
+    assert almaty_filter(hotel2) is False
+    assert astana_filter(hotel2) is True
+    assert other_filter(hotel1) is False
 
 
-def test_recursive_count_rooms_and_capacity() -> None:
-    """Verifies recursive counting of rooms and capacity across hierarchical nodes."""
-    # Base case: empty
-    assert recursive_count_rooms(()) == 0
-    assert recursive_sum_capacity(()) == 0
+def test_closure_by_capacity():
+    """Verify by_capacity closure filters rooms based on guest requirements."""
+    room_single = RoomType(id="r1", hotel_id="h1", name="Single", capacity=1, beds=1)
+    room_family = RoomType(id="r2", hotel_id="h1", name="Family", capacity=4, beds=3)
 
-    # Single Room node
-    single_room = Room("r_demo", "h_demo", "Standard", 100.0, 3, ("WiFi",))
-    assert recursive_count_rooms(single_room) == 1
-    assert recursive_sum_capacity(single_room) == 3
+    cap_1 = by_capacity(1)
+    cap_3 = by_capacity(3)
 
-    # HotelNode
-    hotel_node = HotelNode(
-        id="h_demo",
-        name="Demo Inn",
-        rating=4.5,
-        rooms=(single_room, Room("r_demo2", "h_demo", "Suite", 200.0, 4, ())),
+    assert cap_1(room_single) is True
+    assert cap_1(room_family) is True
+    assert cap_3(room_single) is False
+    assert cap_3(room_family) is True
+
+    with pytest.raises(ValueError):
+        by_capacity(0)
+
+
+def test_closure_by_features():
+    """Verify by_features closure checks required subsets of amenities."""
+    hotel = Hotel(
+        id="h1",
+        name="Spa Resort",
+        stars=5,
+        city="Almaty",
+        features=("spa", "mountain_view", "wifi", "pool"),
     )
-    assert recursive_count_rooms(hotel_node) == 2
-    assert recursive_sum_capacity(hotel_node) == 7
+
+    req_wifi = by_features(("wifi",))
+    req_spa_view = by_features(("spa", "mountain_view"))
+    req_gym = by_features(("gym",))
+
+    assert req_wifi(hotel) is True
+    assert req_spa_view(hotel) is True
+    assert req_gym(hotel) is False
 
 
-def test_recursive_aggregate_city_and_cities() -> None:
-    """Verifies recursive aggregation of entire City and multi-city structures."""
-    cities = get_sample_cities()
-    # City 1: Nice (1 hotel, 2 rooms, capacities 2 + 4 = 6)
-    nice_agg = recursive_aggregate_city(cities[0])
-    assert nice_agg["room_count"] == 2
-    assert nice_agg["total_capacity"] == 6
+def test_lambda_sorters():
+    """Verify lambda combinators for sorting hotels, rooms, and prices."""
+    hotels = (
+        Hotel(id="h1", name="H1", stars=3, city="Almaty"),
+        Hotel(id="h2", name="H2", stars=5, city="Almaty"),
+        Hotel(id="h3", name="H3", stars=4, city="Almaty"),
+    )
+    sorted_hotels = sort_hotels_by_stars(hotels, descending=True)
+    assert tuple(h.stars for h in sorted_hotels) == (5, 4, 3)
 
-    # Multi-city aggregation: 3 cities * 2 rooms each = 6 rooms total
-    # Capacities: Nice (2+4=6), Chamonix (2+5=7), Paris (1+2=3) -> Total = 16
-    all_cities_agg = recursive_aggregate_cities(cities)
-    assert all_cities_agg["room_count"] == 6
-    assert all_cities_agg["total_capacity"] == 16
-
-
-def test_recursive_find_cheapest_room() -> None:
-    """Verifies recursive search for the cheapest room across nested structures."""
-    cities = get_sample_cities()
-
-    # Search in empty node -> None
-    assert recursive_find_cheapest_room(()) is None
-
-    # Search in City 1 (Nice: r101 $220, r102 $550) -> r101 ($220)
-    cheapest_nice = recursive_find_cheapest_room(cities[0])
-    assert cheapest_nice is not None
-    assert cheapest_nice.id == "r101"
-    assert cheapest_nice.base_price == 220.0
-
-    # Search across all cities (Paris has r301 at $85.0)
-    cheapest_overall = recursive_find_cheapest_room(cities)
-    assert cheapest_overall is not None
-    assert cheapest_overall.id == "r301"
-    assert cheapest_overall.base_price == 85.0
+    rooms = (
+        RoomType(id="r1", hotel_id="h1", name="Triple", capacity=3, beds=2),
+        RoomType(id="r2", hotel_id="h1", name="Single", capacity=1, beds=1),
+        RoomType(id="r3", hotel_id="h1", name="Double", capacity=2, beds=1),
+    )
+    sorted_rooms = sort_rooms_by_capacity(rooms, descending=False)
+    assert tuple(r.capacity for r in sorted_rooms) == (1, 2, 3)
 
 
-def test_recursive_calculate_discount() -> None:
-    """Verifies recursive evaluation of nested discount trees without loops."""
-    # Base case: flat discount without sub-discounts
-    simple_discount = DiscountNode(name="Flat 10%", percentage=10.0)
-    assert recursive_calculate_discount(200.0, simple_discount) == 180.0
+def test_recursive_search_available_quotes():
+    """Verify recursive traversal across Hotel -> RoomType -> RatePlan hierarchy."""
+    hotels = (Hotel(id="h1", name="Almaty Hotel", stars=4, city="Almaty"),)
+    rooms = (
+        RoomType(id="r1", hotel_id="h1", name="Double", capacity=2, beds=1),
+        RoomType(id="r2", hotel_id="h1", name="Single", capacity=1, beds=1),
+    )
+    rates = (
+        RatePlan(id="rp1", room_type_id="r1", name="Standard", meals="none"),
+        RatePlan(id="rp2", room_type_id="r2", name="Standard", meals="none"),
+    )
+    prices = (
+        Price(date="2026-06-01", rate_id="rp1", amount=2000000),
+        Price(date="2026-06-02", rate_id="rp1", amount=2000000),
+        Price(date="2026-06-01", rate_id="rp2", amount=1500000),
+        Price(date="2026-06-02", rate_id="rp2", amount=1500000),
+    )
+    avails = (
+        Availability(date="2026-06-01", room_type_id="r1", available_rooms=3),
+        Availability(date="2026-06-02", room_type_id="r1", available_rooms=2),
+        # r2 has 0 availability on day 2
+        Availability(date="2026-06-01", room_type_id="r2", available_rooms=1),
+        Availability(date="2026-06-02", room_type_id="r2", available_rooms=0),
+    )
 
-    # Nested tree:
-    # Top: 10% on $1000 -> $900.0
-    # Sub 1: 5% on $900 -> $855.0
-    # Sub 2: 2% on $855 -> $837.90
-    discount_tree = get_sample_discount_tree()
-    discounted_price = recursive_calculate_discount(1000.0, discount_tree)
-    assert discounted_price == 837.90
+    quotes = recursive_search_available_quotes(
+        hotels=hotels,
+        room_types=rooms,
+        rate_plans=rates,
+        prices=prices,
+        availabilities=avails,
+        city="Almaty",
+        checkin="2026-06-01",
+        checkout="2026-06-03",
+        guests=2,
+    )
+
+    # Only r1 matches guests=2 AND has availability > 0 on both days
+    assert len(quotes) == 1
+    quote = quotes[0]
+    assert quote.room_type.id == "r1"
+    assert quote.base_total == 4000000
+
+
+def test_recursive_apply_rules():
+    """Verify recursive discount and rule evaluation chain."""
+    rules = (
+        Rule(
+            id="rule_vip",
+            kind="vip_discount",
+            payload=(10,),
+        ),
+        Rule(
+            id="rule_early",
+            kind="early_bird",
+            payload=(14, 500000),
+        ),
+    )
+
+    # Test with both conditions true
+    ctx_both = {"is_vip": True, "days_in_advance": 30}
+    # 2000000 -> 10% off = 1800000 -> minus 500000 = 1300000
+    res1 = recursive_apply_rules(2000000, rules, ctx_both)
+    assert res1 == 1300000
+
+    # Test with only loyalty true
+    ctx_vip = {"is_vip": True, "days_in_advance": 5}
+    res2 = recursive_apply_rules(2000000, rules, ctx_vip)
+    assert res2 == 1800000
+
+
+def test_recursive_find_cheapest_quote():
+    """Verify recursive tail-search for minimum quote."""
+    hotel = Hotel(id="h1", name="Hotel", stars=4, city="Almaty")
+    room = RoomType(id="r1", hotel_id="h1", name="Room", capacity=2, beds=1)
+    rp = RatePlan(id="rp1", room_type_id="r1", name="Plan")
+
+    quotes = (
+        BookingQuote(hotel, room, rp, "2026-06-01", "2026-06-02", 1, 5000000, 5000000),
+        BookingQuote(hotel, room, rp, "2026-06-01", "2026-06-02", 1, 3200000, 3200000),
+        BookingQuote(hotel, room, rp, "2026-06-01", "2026-06-02", 1, 4100000, 4100000),
+    )
+
+    cheapest = recursive_find_cheapest_quote(quotes)
+    assert cheapest is not None
+    assert cheapest.final_total == 3200000
+
+    # Empty list test
+    assert recursive_find_cheapest_quote(()) is None

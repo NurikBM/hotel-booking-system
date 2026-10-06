@@ -1,169 +1,223 @@
 """Terminal CLI Application: Hotel & Room Booking System.
 
-Pure functional programming interactive demonstration runner (Lab 1 & Lab 2).
+Pure functional programming interactive demonstration runner (Labs 1, 2, and 3).
 Run this file in your terminal:
   $ python3 cli.py
 """
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
+import time
 
-from core.filters import filter_rooms_by_capacity
-from core.fp_tools import (
-    make_amenity_filter,
-    make_price_filter,
-    recursive_aggregate_cities,
-    recursive_aggregate_city,
-    recursive_calculate_discount,
-    recursive_find_cheapest_room,
-    sort_rooms_by_price,
+from core.domain import Rule
+from core.memo import (
+    benchmark_speedup,
+    calculate_quote_with_loyalty,
+    memoized_calculate_quote_with_loyalty,
+    memoized_nightly_sum,
 )
-from data.mock_db import (
-    get_sample_cities,
-    get_sample_discount_tree,
-    get_sample_hotels,
-    get_sample_rooms,
+from core.recursion import (
+    recursive_apply_rules,
+    recursive_find_cheapest_quote,
+    recursive_search_available_quotes,
+)
+from core.transforms import (
+    by_capacity,
+    by_city,
+    load_seed,
+    sort_hotels_by_stars,
 )
 
 
 def print_header(title: str) -> None:
-    """Print a visually distinct section header."""
     line = "=" * 64
     print(f"\n{line}")
     print(f" {title.upper()} ")
     print(f"{line}")
 
 
-def show_sample_data() -> None:
-    """Display immutable domain data for Hotels and Rooms (Lab 1)."""
-    print_header("1. Sample Data (Immutable Domain Entities)")
-    hotels = get_sample_hotels()
-    rooms = get_sample_rooms()
-
-    print(f"Loaded {len(hotels)} Hotels and {len(rooms)} Rooms:\n")
-    for hotel in hotels:
-        print(f"🏨 [{hotel.id}] {hotel.name} ({hotel.location})")
-        print(f"   Rating: {hotel.rating}/5.0 | Amenities: {', '.join(hotel.amenities)}")
-        hotel_rooms = [r for r in rooms if r.hotel_id == hotel.id]
-        for r in hotel_rooms:
-            print(
-                f"   └─ 🛏️ [{r.id}] {r.room_type} | Rate: ${r.base_price:.2f}/night | "
-                f"Cap: {r.capacity} | {', '.join(r.amenities)}"
-            )
-        print()
+def format_cents(cents: int) -> str:
+    return f"{cents / 100:,.2f} KZT"
 
 
-def search_and_filter_rooms() -> None:
-    """Filter rooms using Lab 1 & Lab 2 closure-based predicates."""
-    print_header("2. Search & Filter Rooms (Closures & Predicates)")
-    rooms = get_sample_rooms()
+def get_data():
+    seed_path = os.path.join(os.path.dirname(__file__), "data", "seed.json")
+    return load_seed(seed_path)
 
-    print("Default rooms count:", len(rooms))
-    min_p_input = input("Enter minimum price [default 100]: ").strip()
-    min_p = float(min_p_input) if min_p_input else 100.0
 
-    max_p_input = input("Enter maximum price [default 300]: ").strip()
-    max_p = float(max_p_input) if max_p_input else 300.0
-
-    amenity_input = input("Enter required amenity (e.g. Balcony, AC, WiFi) [default none]: ").strip()
-
-    # 1. Apply closure price filter (Lab 2)
-    price_filter_fn = make_price_filter(min_p, max_p)
-    filtered = list(filter(price_filter_fn, rooms))
-
-    # 2. Apply closure amenity filter if provided (Lab 2)
-    if amenity_input:
-        amenity_filter_fn = make_amenity_filter(amenity_input)
-        filtered = list(filter(amenity_filter_fn, filtered))
-
-    # 3. Sort results using pure lambda (Lab 2)
-    sorted_filtered = sort_rooms_by_price(filtered, descending=False)
-
-    print(f"\nMatched {len(sorted_filtered)} room(s):")
-    for r in sorted_filtered:
+def show_seed_stats() -> None:
+    print_header("1. Seed Dataset Statistics (Lab 1)")
+    hotels, rooms, rates, prices, avails, guests = get_data()
+    print(f"Hotels loaded:        {len(hotels)}")
+    print(f"Room Types loaded:    {len(rooms)}")
+    print(f"Rate Plans loaded:    {len(rates)}")
+    print(f"Price records:        {len(prices)} (60-day calendar)")
+    print(f"Availability slots:   {len(avails)}")
+    print(f"Guests registered:    {len(guests)}")
+    print("\nHotels Summary:")
+    for h in hotels:
         print(
-            f" • [{r.id}] {r.room_type} — ${r.base_price:.2f}/night (Cap: {r.capacity}) "
-            f"Amenities: {', '.join(r.amenities)}"
+            f"  • [{'⭐' * h.stars}] {h.name} ({h.city}) | Features: {', '.join(h.features[:3])}"
         )
 
 
-def demo_recursive_algorithms() -> None:
-    """Demonstrate recursive algorithms on hierarchical structures (Lab 2)."""
-    print_header("3. Recursive Algorithms Demo (Lab 2)")
-    cities = get_sample_cities()
+def show_closure_filters() -> None:
+    print_header("2. Higher-Order Closures & Lambdas (Lab 2)")
+    hotels, rooms, _, _, _, _ = get_data()
 
-    # Recursive Algorithm 1: Aggregation
-    print("--- Algorithm 1: Recursive City Hierarchy Aggregation ---")
-    for city in cities:
-        agg = recursive_aggregate_city(city)
-        print(f"🏙️  City: {city.name:10s} -> Rooms: {agg['room_count']}, Total Capacity: {agg['total_capacity']} guests")
+    print("Filter: by_city('Almaty')")
+    almaty_hotels = tuple(filter(by_city("Almaty"), hotels))
+    for h in almaty_hotels:
+        print(f"  • {h.name} ({h.city})")
 
-    all_agg = recursive_aggregate_cities(cities)
-    print(f"\n🌐 All Cities Total -> Rooms: {all_agg['room_count']}, Total Capacity: {all_agg['total_capacity']} guests")
+    print("\nFilter: by_capacity(3) on room types:")
+    family_rooms = tuple(filter(by_capacity(3), rooms))
+    for r in family_rooms[:5]:
+        print(f"  • {r.name} (Cap: {r.capacity}, Beds: {r.beds})")
 
-    # Recursive Algorithm 2: Recursive Search & Nested Discount Parsing
-    print("\n--- Algorithm 2: Recursive Search & Nested Discount Parsing ---")
-    cheapest = recursive_find_cheapest_room(cities)
+    print("\nLambda Sorting: sort_hotels_by_stars:")
+    for h in sort_hotels_by_stars(hotels):
+        print(f"  • {h.stars}★ {h.name}")
+
+
+def show_recursive_search() -> None:
+    print_header("3. Recursive Offer Search (Lab 2 Recursion)")
+    hotels, rooms, rates, prices, avails, _ = get_data()
+
+    city = "Almaty"
+    cin = "2026-06-01"
+    cout = "2026-06-05"
+    guests = 2
+
+    print(
+        f"Searching available quotes recursively for {city}, {cin} to {cout}, {guests} guests..."
+    )
+    t0 = time.perf_counter()
+    quotes = recursive_search_available_quotes(
+        hotels, rooms, rates, prices, avails, city, cin, cout, guests
+    )
+    t_elapsed = (time.perf_counter() - t0) * 1000
+
+    print(f"Found {len(quotes)} offers purely via recursion in {t_elapsed:.2f} ms:")
+    cheapest = recursive_find_cheapest_quote(quotes)
     if cheapest:
-        print(f"🔍 Cheapest Room found recursively across all cities: [{cheapest.id}] {cheapest.room_type} at ${cheapest.base_price:.2f}/night")
-
-    discount_tree = get_sample_discount_tree()
-    base_price = 1000.0
-    discounted = recursive_calculate_discount(base_price, discount_tree)
-    print(f"🏷️  Nested Discount Tree Evaluation: Base ${base_price:.2f} -> Final ${discounted:.2f}")
-
-
-def run_pytest() -> None:
-    """Run pytest suite for Lab 1 and Lab 2."""
-    print_header("4. Running Pytest Suite (tests/test_lab1.py & tests/test_lab2.py)")
-    try:
-        res = subprocess.run(
-            [sys.executable, "-m", "pytest", "-v", "tests/test_lab1.py", "tests/test_lab2.py"],
-            capture_output=True,
-            text=True,
+        print("\n🏆 Cheapest Quote (Recursive Extremum):")
+        print(f"   {cheapest.hotel.name} - {cheapest.room_type.name}")
+        print(
+            f"   Rate: {cheapest.rate_plan.name} | Total: {format_cents(cheapest.final_total)}"
         )
-        print(res.stdout)
-        if res.stderr:
-            print(res.stderr)
-        if res.returncode == 0:
-            print("✅ All unit and functional tests passed successfully!")
-        else:
-            print("❌ Some tests failed.")
-    except Exception as exc:
-        print(f"Error running pytest: {exc}")
+
+    for q in quotes[:3]:
+        print(
+            f"  • {q.hotel.name} | {q.room_type.name} | {format_cents(q.final_total)}"
+        )
 
 
-def main_menu() -> None:
-    """Terminal interactive menu loop."""
+def show_recursive_rules() -> None:
+    print_header("4. Recursive Business Rules Engine (Lab 2)")
+    base_cents = 10000000  # 100,000 KZT
+
+    rules = (
+        Rule(id="rule_vip", kind="vip_discount", payload=(10,)),
+        Rule(id="rule_early_bird", kind="early_bird", payload=(14, 500000)),
+    )
+
+    ctx = {"is_vip": True, "days_ahead": 30}
+    final_cents = recursive_apply_rules(base_cents, rules, ctx)
+
+    print(f"Base price:        {format_cents(base_cents)}")
+    print("Applied rules:     VIP (10%) + Early Bird (5,000 KZT)")
+    print(f"Final discounted:  {format_cents(final_cents)}")
+
+
+def show_memoization_and_benchmark() -> None:
+    print_header("5. Pure Memoization & Performance Benchmark (Lab 3)")
+    _, _, rates, prices, _, _ = get_data()
+
+    print("--- Part A: Testing memoized_nightly_sum cache hits ---")
+    memoized_nightly_sum.cache_clear()
+    rate_id = rates[0].id
+
+    t0 = time.perf_counter()
+    res1 = memoized_nightly_sum(prices, "2026-06-01", "2026-06-08", rate_id)
+    t_miss = (time.perf_counter() - t0) * 1000
+
+    t1 = time.perf_counter()
+    res2 = memoized_nightly_sum(prices, "2026-06-01", "2026-06-08", rate_id)
+    t_hit = (time.perf_counter() - t1) * 1000
+
+    info = memoized_nightly_sum.cache_info()
+    print(f"Call 1 (Miss): {format_cents(res1)} in {t_miss:.4f} ms")
+    print(f"Call 2 (Hit):  {format_cents(res2)} in {t_hit:.4f} ms")
+    print(
+        f"Cache status:  hits={info.hits}, misses={info.misses}, size={info.currsize}"
+    )
+
+    print("\n--- Part B: 300-Iteration Speedup Benchmark ---")
+    queries = tuple(
+        (
+            1000000 + i * 500000,
+            3 + (i % 4),
+            1 + (i % 3),
+            ("standard", "silver", "gold", "platinum")[i % 4],
+        )
+        for i in range(10)
+    )
+
+    bench = benchmark_speedup(
+        unmemoized_fn=calculate_quote_with_loyalty,
+        memoized_fn=memoized_calculate_quote_with_loyalty,
+        queries=queries,
+        repetitions=300,
+    )
+
+    print(f"Iterations:        {bench.iterations}")
+    print(f"Unmemoized time:   {bench.unmemoized_time_sec * 1000:.2f} ms")
+    print(f"Memoized time:     {bench.memoized_time_sec * 1000:.2f} ms")
+    print(f"Speedup Factor:    {bench.speedup_factor:.1f}x faster!")
+    print(
+        f"Cache Hit Ratio:   {bench.cache_info.hit_ratio * 100:.1f}% ({bench.cache_info.hits} hits)"
+    )
+
+
+def run_tests() -> None:
+    print_header("6. Running Test Suite (pytest tests/)")
+    subprocess.run([sys.executable, "-m", "pytest", "-v", "tests/"], check=False)
+
+
+def main() -> None:
     while True:
-        print_header("Hotel & Room Booking System (Lab 1 & Lab 2)")
-        print("1. Load sample data")
-        print("2. Search/filter rooms")
-        print("3. Recursive aggregation demo")
-        print("4. Run pytest")
+        print_header("Hotel FP System — Main Menu (Labs 1–3)")
+        print("1. View Seed Dataset Statistics (Lab 1)")
+        print("2. Closure-Based Filters & Lambdas (Lab 2)")
+        print("3. Recursive Hierarchical Search (Lab 2)")
+        print("4. Recursive Rules Engine (Lab 2)")
+        print("5. Pure Memoization & Speedup Benchmark (Lab 3)")
+        print("6. Run Automated Test Suite (pytest)")
         print("0. Exit")
 
-        try:
-            choice = input("\nEnter choice [0-4]: ").strip()
-        except EOFError:
-            break
-
+        choice = input("\nSelect an option [0-6]: ").strip()
         if choice == "1":
-            show_sample_data()
+            show_seed_stats()
         elif choice == "2":
-            search_and_filter_rooms()
+            show_closure_filters()
         elif choice == "3":
-            demo_recursive_algorithms()
+            show_recursive_search()
         elif choice == "4":
-            run_pytest()
+            show_recursive_rules()
+        elif choice == "5":
+            show_memoization_and_benchmark()
+        elif choice == "6":
+            run_tests()
         elif choice == "0":
-            print("\nExiting. Goodbye!")
+            print("\nExiting. Goodbye!\n")
             break
         else:
-            print("\nInvalid choice. Please select an option between 0 and 4.")
+            print("Invalid selection. Try again.")
 
 
 if __name__ == "__main__":
-    main_menu()
+    main()
