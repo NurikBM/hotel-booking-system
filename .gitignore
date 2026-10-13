@@ -9,8 +9,9 @@ venv/
 ENV/
 env/
 
-# Testing cache
+# Testing and linting cache
 .pytest_cache/
+.ruff_cache/
 coverage/
 
 # Build artifacts

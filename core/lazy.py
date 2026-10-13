@@ -1,4 +1,4 @@
-"""Ленивые последовательности, генераторы и бесконечные потоки.
+"""Lazy sequences, generators, and infinite streams.
 
-Реализуется в Lab 4–8.
+Planned for implementation in Lab 5.
 """

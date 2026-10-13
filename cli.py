@@ -1,6 +1,6 @@
 """Terminal CLI Application: Hotel & Room Booking System.
 
-Pure functional programming interactive demonstration runner (Labs 1, 2, and 3).
+Pure functional programming interactive demonstration runner (Labs 1–4).
 Run this file in your terminal:
   $ python3 cli.py
 """
@@ -12,7 +12,16 @@ import subprocess
 import sys
 import time
 
-from core.domain import Rule
+from core.domain import CartItem, Rule
+from core.ftypes import (
+    DEFAULT_RULES,
+    Left,
+    Nothing,
+    Right,
+    Some,
+    safe_rate,
+    validate_and_calculate_booking,
+)
 from core.memo import (
     benchmark_speedup,
     calculate_quote_with_loyalty,
@@ -121,11 +130,19 @@ def show_recursive_rules() -> None:
     base_cents = 10000000  # 100,000 KZT
 
     rules = (
-        Rule(id="rule_vip", kind="vip_discount", payload=(10,)),
-        Rule(id="rule_early_bird", kind="early_bird", payload=(14, 500000)),
+        Rule(
+            id="rule_vip",
+            kind="vip_discount",
+            payload=(10,),
+        ),
+        Rule(
+            id="rule_early",
+            kind="early_bird",
+            payload=(14, 500000),
+        ),
     )
 
-    ctx = {"is_vip": True, "days_ahead": 30}
+    ctx = {"is_vip": True, "days_in_advance": 30}
     final_cents = recursive_apply_rules(base_cents, rules, ctx)
 
     print(f"Base price:        {format_cents(base_cents)}")
@@ -183,23 +200,167 @@ def show_memoization_and_benchmark() -> None:
     )
 
 
+def show_validation_pipeline() -> None:
+    print_header("6. Maybe & Either Monadic Validation Pipeline (Lab 4)")
+    _, rooms, rates, prices, avails, guests = get_data()
+    guest = guests[0]
+
+    print("--- 6.1 Safe Lookup via Maybe Monad (safe_rate) ---")
+    sr_found = safe_rate(rates, rates[0].id)
+    if isinstance(sr_found, Some):
+        print(
+            f"  • Existing rate plan: Some('{sr_found.value.name}') [ID: {sr_found.value.id}]"
+        )
+    sr_missing = safe_rate(rates, "nonexistent_rate_999")
+    if isinstance(sr_missing, Nothing):
+        print("  • Non-existent rate plan: Nothing() [Safe Optional, zero exceptions]")
+
+    print("\n--- 6.2 Scenario 1: Valid Cart Booking (Success -> Right) ---")
+    valid_item = CartItem(
+        id="cart_cli_valid_1",
+        guest_id=guest.id,
+        room_type_id=rooms[0].id,
+        rate_id=rates[0].id,
+        checkin="2026-06-01",
+        checkout="2026-06-04",
+        guests_count=1,
+        total_price=0,
+    )
+    res_valid = validate_and_calculate_booking(
+        booking_id="bk_cli_valid",
+        guest=guest,
+        items=(valid_item,),
+        prices=prices,
+        availability=avails,
+        rules=DEFAULT_RULES,
+        room_types=rooms,
+        rates=rates,
+    )
+    if isinstance(res_valid, Right):
+        booking = res_valid.value
+        print("  ✅ Result: Right(Booking)")
+        print(f"     Booking ID: {booking.id} | Guest: {guest.name}")
+        print(
+            f"     Calculated Total: {format_cents(booking.total)} across {len(booking.items)} item(s)"
+        )
+
+    print("\n--- 6.3 Scenario 2: Overcapacity Cart Item (Failure -> Left) ---")
+    overcap_item = CartItem(
+        id="cart_cli_overcap_1",
+        guest_id=guest.id,
+        room_type_id=rooms[0].id,
+        rate_id=rates[0].id,
+        checkin="2026-06-01",
+        checkout="2026-06-04",
+        guests_count=rooms[0].capacity + 5,
+        total_price=0,
+    )
+    res_overcap = validate_and_calculate_booking(
+        booking_id="bk_cli_overcap",
+        guest=guest,
+        items=(overcap_item,),
+        prices=prices,
+        availability=avails,
+        rules=DEFAULT_RULES,
+        room_types=rooms,
+        rates=rates,
+    )
+    if isinstance(res_overcap, Left):
+        print("  ❌ Result: Left(error)")
+        print(
+            f"     Code: {res_overcap.error.get('code')} | Message: {res_overcap.error.get('message')}"
+        )
+
+    print("\n--- 6.4 Scenario 3: Unavailable Calendar Date (Failure -> Left) ---")
+    unavail_item = CartItem(
+        id="cart_cli_unavail_1",
+        guest_id=guest.id,
+        room_type_id=rooms[0].id,
+        rate_id=rates[0].id,
+        checkin="2026-06-01",
+        checkout="2026-06-04",
+        guests_count=1,
+        total_price=0,
+    )
+    res_unavail = validate_and_calculate_booking(
+        booking_id="bk_cli_unavail",
+        guest=guest,
+        items=(unavail_item,),
+        prices=prices,
+        availability=(),  # Zero availability records
+        rules=DEFAULT_RULES,
+        room_types=rooms,
+        rates=rates,
+    )
+    if isinstance(res_unavail, Left):
+        print("  ❌ Result: Left(error)")
+        print(
+            f"     Code: {res_unavail.error.get('code')} | Message: {res_unavail.error.get('message')}"
+        )
+
+    print("\n--- 6.5 Scenario 4: Invalid Date Range (Failure -> Left) ---")
+    invdates_item = CartItem(
+        id="cart_cli_invdates_1",
+        guest_id=guest.id,
+        room_type_id=rooms[0].id,
+        rate_id=rates[0].id,
+        checkin="2026-06-10",
+        checkout="2026-06-05",  # checkout before checkin
+        guests_count=1,
+        total_price=0,
+    )
+    res_invdates = validate_and_calculate_booking(
+        booking_id="bk_cli_invdates",
+        guest=guest,
+        items=(invdates_item,),
+        prices=prices,
+        availability=avails,
+        rules=DEFAULT_RULES,
+        room_types=rooms,
+        rates=rates,
+    )
+    if isinstance(res_invdates, Left):
+        print("  ❌ Result: Left(error)")
+        print(
+            f"     Code: {res_invdates.error.get('code')} | Message: {res_invdates.error.get('message')}"
+        )
+
+    print("\n--- 6.6 Scenario 5: Empty Cart Items (Failure -> Left) ---")
+    res_empty = validate_and_calculate_booking(
+        booking_id="bk_cli_empty",
+        guest=guest,
+        items=(),
+        prices=prices,
+        availability=avails,
+        rules=DEFAULT_RULES,
+        room_types=rooms,
+        rates=rates,
+    )
+    if isinstance(res_empty, Left):
+        print("  ❌ Result: Left(error)")
+        print(
+            f"     Code: {res_empty.error.get('code')} | Message: {res_empty.error.get('message')}"
+        )
+
+
 def run_tests() -> None:
-    print_header("6. Running Test Suite (pytest tests/)")
+    print_header("7. Running Test Suite (pytest tests/)")
     subprocess.run([sys.executable, "-m", "pytest", "-v", "tests/"], check=False)
 
 
 def main() -> None:
     while True:
-        print_header("Hotel FP System — Main Menu (Labs 1–3)")
+        print_header("Hotel FP System — Main Menu (Labs 1–4)")
         print("1. View Seed Dataset Statistics (Lab 1)")
         print("2. Closure-Based Filters & Lambdas (Lab 2)")
         print("3. Recursive Hierarchical Search (Lab 2)")
         print("4. Recursive Rules Engine (Lab 2)")
         print("5. Pure Memoization & Speedup Benchmark (Lab 3)")
-        print("6. Run Automated Test Suite (pytest)")
+        print("6. Monadic Validation Pipeline (Lab 4 Maybe/Either)")
+        print("7. Run Automated Test Suite (pytest)")
         print("0. Exit")
 
-        choice = input("\nSelect an option [0-6]: ").strip()
+        choice = input("\nSelect an option [0-7]: ").strip()
         if choice == "1":
             show_seed_stats()
         elif choice == "2":
@@ -211,6 +372,8 @@ def main() -> None:
         elif choice == "5":
             show_memoization_and_benchmark()
         elif choice == "6":
+            show_validation_pipeline()
+        elif choice == "7":
             run_tests()
         elif choice == "0":
             print("\nExiting. Goodbye!\n")

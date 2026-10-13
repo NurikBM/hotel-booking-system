@@ -263,6 +263,9 @@ def recursive_apply_rules(
       - 'vip_discount': payload=(pct,) -> if context and context.get('is_vip'): reduces by pct %
       - 'early_bird': payload=(min_days, discount) -> if context.get('days_in_advance', 0) > min_days: reduces
       - 'long_stay': payload=(min_nights, pct) -> if context.get('nights', 0) >= min_nights: reduces by pct %
+
+    Unknown rule kinds (including validation rules like 'min_stay' and 'max_stay') are safely
+    ignored during price calculation as they are handled by the validation layer.
     """
     if r_idx >= len(rules):
         return current_amount
@@ -297,12 +300,6 @@ def recursive_apply_rules(
         pct = payload[1] if len(payload) > 1 else 5
         if ctx.get("nights", 0) >= min_nights:
             new_amount = (current_amount * (100 - pct)) // 100
-    elif hasattr(rule, "action") and callable(rule.action):
-        predicate_matches = (
-            rule.predicate(context) if getattr(rule, "predicate", None) else True
-        )
-        if predicate_matches:
-            new_amount = rule.action(current_amount)
 
     return recursive_apply_rules(new_amount, rules, context, r_idx + 1)
 

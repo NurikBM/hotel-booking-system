@@ -30,8 +30,14 @@ class RoomType:
     hotel_id: str
     name: str
     capacity: int
-    beds: int
+    beds: tuple[str, ...] | int = ()
     features: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if isinstance(self.beds, int):
+            object.__setattr__(self, "beds", tuple("single" for _ in range(self.beds)))
+        elif isinstance(self.beds, (list, tuple)):
+            object.__setattr__(self, "beds", tuple(str(b) for b in self.beds))
 
 
 @dataclass(frozen=True)
@@ -40,22 +46,41 @@ class RatePlan:
 
     id: str
     room_type_id: str
-    name: str
+    name: str = ""
     meals: str = "none"  # "none", "breakfast", "half-board", "all-inclusive"
     cancellation: str = "standard"  # "free", "non-refundable", "standard"
     price_factor: float = 1.0
+    hotel_id: str = ""
+    title: str = ""
+    refundable: bool = True
+    cancel_before_days: int = 1
+
+    def __post_init__(self) -> None:
+        if not self.title and self.name:
+            object.__setattr__(self, "title", self.name)
+        elif not self.name and self.title:
+            object.__setattr__(self, "name", self.title)
+        if self.cancellation == "non-refundable":
+            object.__setattr__(self, "refundable", False)
+            object.__setattr__(self, "cancel_before_days", 0)
 
 
 @dataclass(frozen=True)
 class Price:
     """Price for a specific rate plan on a specific calendar date.
 
-    Amount is strictly an integer in cents/kopecks.
+    Amount is strictly an integer in cents / tiyn.
     """
 
     date: str  # YYYY-MM-DD
     rate_id: str
-    amount: int  # in cents / kopecks
+    amount: int  # in cents / tiyn
+    id: str = ""
+    currency: str = "KZT"
+
+    def __post_init__(self) -> None:
+        if not self.id:
+            object.__setattr__(self, "id", f"pr_{self.rate_id}_{self.date}")
 
 
 @dataclass(frozen=True)
@@ -65,6 +90,11 @@ class Availability:
     date: str  # YYYY-MM-DD
     room_type_id: str
     available_rooms: int
+    id: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.id:
+            object.__setattr__(self, "id", f"av_{self.room_type_id}_{self.date}")
 
 
 @dataclass(frozen=True)

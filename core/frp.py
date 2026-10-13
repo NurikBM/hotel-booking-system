@@ -1,4 +1,4 @@
-"""Функционально-реактивное программирование (FRP) и потоки событий.
+"""Functional Reactive Programming (FRP) and event streams.
 
-Реализуется в Lab 4–8.
+Planned for implementation in Lab 6.
 """

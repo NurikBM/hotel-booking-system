@@ -21,14 +21,6 @@ import time
 
 import streamlit as st
 
-# Configure page layout and style
-st.set_page_config(
-    page_title="Hotel FP System (Labs 1–3)",
-    page_icon="🏨",
-    layout="wide",
-    initial_sidebar_state="collapsed",
-)
-
 # Core functional imports
 from core.domain import (
     Availability,
@@ -39,6 +31,15 @@ from core.domain import (
     RatePlan,
     RoomType,
     Rule,
+)
+from core.ftypes import (
+    DEFAULT_RULES,
+    Left,
+    Right,
+    Some,
+    safe_rate,
+    validate_and_calculate_booking,
+    validate_cart_item,
 )
 from core.memo import (
     benchmark_speedup,
@@ -81,6 +82,12 @@ def format_cents(cents: int) -> str:
 
 
 def main() -> None:
+    st.set_page_config(
+        page_title="Hotel FP System (Labs 1–4)",
+        page_icon="🏨",
+        layout="wide",
+        initial_sidebar_state="collapsed",
+    )
     # Header Banner
     st.markdown(
         """
@@ -94,7 +101,7 @@ def main() -> None:
                 </div>
                 <div style="text-align: right;">
                     <span style="background: #0369a1; color: #e0f2fe; padding: 0.35rem 0.75rem; border-radius: 9999px; font-size: 0.8rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em;">
-                        Lab 1 + Lab 2 + Lab 3
+                        Lab 1 + Lab 2 + Lab 3 + Lab 4
                     </span>
                 </div>
             </div>
@@ -143,7 +150,7 @@ def main() -> None:
 
         st.markdown("---")
 
-        c1, c2, c3 = st.columns(3)
+        c1, c2, c3, c4 = st.columns(4)
         with c1:
             st.markdown("""
                 ### 🧱 Lab 1: Immutable Domain
@@ -170,6 +177,15 @@ def main() -> None:
                 - **Cache Eviction**: Configurable size bounds & pure `cache_clear()`.
                 - **Specialized Pricing**: `memoized_nightly_sum` and quote calculators.
                 - **Benchmark Suite**: Rigorous 250+ iteration performance test proving 10x–50x speedups.
+                """)
+        with c4:
+            st.markdown("""
+                ### 🛡️ Lab 4: Monadic Validation
+                - **Pure Containers**: `Maybe[T]` (`Some`/`Nothing`) & `Either[E, T]` (`Right`/`Left`).
+                - **Monadic Methods**: `map`, `bind`, `get_or_else` without exceptions.
+                - **Pure Lookups**: `safe_room_type`, `safe_rate`, `maybe_to_either`.
+                - **Validation Pipeline**: `validate_dates`, `validate_cart_item`, `validate_booking`.
+                - **Pure Composition**: `validate_and_calculate_booking` returns `Right(Booking)` or `Left(error)`.
                 """)
 
     # ========================================================================
@@ -331,19 +347,27 @@ def main() -> None:
             is_long = st.checkbox("Long Stay (>5 nights, 5% off)", value=False)
 
             rules = (
-                Rule(id="rule_vip", kind="vip_discount", payload=(10,)),
-                Rule(id="rule_early_bird", kind="early_bird", payload=(14, 500000)),
-                Rule(id="rule_long_stay", kind="long_stay", payload=(5, 5)),
+                Rule(
+                    id="rule_vip",
+                    kind="vip_discount",
+                    payload=(10,),
+                ),
+                Rule(
+                    id="rule_early",
+                    kind="early_bird",
+                    payload=(14, 500000),
+                ),
+                Rule(
+                    id="rule_long",
+                    kind="long_stay",
+                    payload=(5, 5),
+                ),
             )
 
-            # Map UI checkboxes to the context keys recursive_apply_rules reads
-            # for each rule kind: vip_discount -> is_vip, early_bird -> days_ahead
-            # (compared against the rule's min_days payload), long_stay -> nights
-            # (compared against the rule's min_nights payload).
             context = {
                 "is_vip": is_vip,
-                "days_ahead": 30 if is_early else 0,
-                "nights": 6 if is_long else 0,
+                "days_in_advance": 30 if is_early else 0,
+                "nights": 7 if is_long else 1,
             }
             final_cents = recursive_apply_rules(base_cents, rules, context)
 
@@ -352,6 +376,120 @@ def main() -> None:
                 f"**Final Amount after Recursive Rules:** `{format_cents(final_cents)}`"
             )
             st.write(f"**Total Savings:** `{format_cents(base_cents - final_cents)}`")
+
+        st.markdown("---")
+        st.markdown("### 3. Maybe / Either (Lab 4)")
+        st.write(
+            "Pure functional monad containers `Maybe[T]` (`Some` / `Nothing`) and "
+            "`Either[E, T]` (`Right` / `Left`) for exception-free validation pipelines."
+        )
+
+        fc_l4_c1, fc_l4_c2 = st.columns([1, 1])
+        with fc_l4_c1:
+            st.markdown("#### Safe Rate Plan Lookup (`safe_rate`)")
+            st.write(
+                "Demonstration of the `Maybe` monad: returns `Some(RatePlan)` or `Nothing()`."
+            )
+
+            rate_search_opts = [
+                f"(Existing) {rp.name} [{rp.id}]" for rp in rate_plans[:5]
+            ] + ["(Non-existent) invalid_rate_999"]
+            sel_rate_label = st.selectbox(
+                "Select Rate Plan to Look Up",
+                rate_search_opts,
+                key="l4_fc_sel_rate_lookup",
+            )
+
+            if "invalid" in sel_rate_label:
+                lookup_id = "invalid_rate_999"
+            else:
+                lookup_id = sel_rate_label.split("[")[-1].rstrip("]")
+
+            res_maybe = safe_rate(rate_plans, lookup_id)
+            if isinstance(res_maybe, Some):
+                st.success(
+                    f"✅ Result: `Some(RatePlan)` &mdash; **{res_maybe.value.name}**"
+                )
+                st.write(
+                    f"• ID: `{res_maybe.value.id}` &middot; Meals: `{res_maybe.value.meals}` &middot; Cancellation: `{res_maybe.value.cancellation}`"
+                )
+                mapped = res_maybe.map(lambda r: f"Rate: {r.name} ({r.meals})")
+                st.write(f"• `map(lambda ...)` &rarr; `{mapped}`")
+            else:
+                st.warning(
+                    "⚠️ Result: `Nothing()` &mdash; rate plan not found (zero exceptions or KeyError)"
+                )
+                fallback = res_maybe.get_or_else("Default Fallback Rate")
+                st.write(f"• `get_or_else('...')` &rarr; `'{fallback}'`")
+
+        with fc_l4_c2:
+            st.markdown("#### Cart Item Pure Validation (`validate_cart_item`)")
+            st.write(
+                "Demonstration of the `Either` monad: returns `Right(CartItem)` on success or `Left(dict)` on failure."
+            )
+
+            sel_rt = st.selectbox(
+                "Room Type",
+                room_types[:5],
+                format_func=lambda rt: f"{rt.name} (Capacity: {rt.capacity})",
+                key="l4_fc_val_room",
+            )
+            matching_rates = [rp for rp in rate_plans if rp.room_type_id == sel_rt.id]
+            if not matching_rates:
+                matching_rates = [rate_plans[0]]
+            sel_rp = st.selectbox(
+                "Rate Plan",
+                matching_rates,
+                format_func=lambda rp: f"{rp.name} ({rp.id})",
+                key="l4_fc_val_rate",
+            )
+
+            v_cin = st.text_input(
+                "Check-in Date (ISO-8601)", value="2026-06-01", key="l4_fc_cin"
+            )
+            v_cout = st.text_input(
+                "Check-out Date (ISO-8601)", value="2026-06-04", key="l4_fc_cout"
+            )
+            v_guests = st.number_input(
+                "Guests Count",
+                min_value=1,
+                max_value=10,
+                value=sel_rt.capacity,
+                key="l4_fc_guests_cnt",
+            )
+
+            if st.button(
+                "🔍 Validate CartItem (Pure Either)",
+                key="l4_fc_btn_validate_item",
+            ):
+                item_to_check = CartItem(
+                    id="cart_l4_demo",
+                    guest_id=guests[0].id,
+                    room_type_id=sel_rt.id,
+                    rate_id=sel_rp.id,
+                    checkin=v_cin,
+                    checkout=v_cout,
+                    guests_count=int(v_guests),
+                    total_price=0,
+                )
+                item_validation = validate_cart_item(
+                    item_to_check,
+                    room_types=room_types,
+                    rates=rate_plans,
+                    availability=availabilities,
+                    rules=DEFAULT_RULES,
+                )
+                if isinstance(item_validation, Right):
+                    st.success("✅ Validation Passed! Container: `Right(CartItem)`")
+                    st.write(f"• ID: `{item_validation.value.id}`")
+                    st.write(
+                        f"• Room: `{item_validation.value.room_type_id}` &middot; Rate: `{item_validation.value.rate_id}`"
+                    )
+                elif isinstance(item_validation, Left):
+                    st.error("❌ Validation Rejected! Container: `Left(error)`")
+                    st.write(f"• Error Code: `{item_validation.error.get('code')}`")
+                    st.write(f"• Message: {item_validation.error.get('message')}")
+                    st.json(item_validation.error)
 
     # ========================================================================
     # TAB 4: PIPELINES & MEMOIZATION (LAB 1 & LAB 3)
@@ -519,17 +657,19 @@ def main() -> None:
                 )
 
     # ========================================================================
-    # TAB 5: ASYNC / FRP (LAB 6 & LAB 8 PLACEHOLDER)
+    # TAB 5: ASYNC / FRP (LABS 5–8 ROADMAP)
     # ========================================================================
     with tabs[4]:
-        st.subheader("Async & Functional Reactive Programming (FRP)")
+        st.subheader("Future Labs: Async, FRP, Composition & Reports (Labs 5–8)")
         st.markdown(
             """
             <div style="background: #1e293b; border-left: 4px solid #38bdf8; padding: 1.5rem; border-radius: 8px; margin: 1rem 0;">
-                <h4 style="margin: 0 0 0.5rem 0; color: #f8fafc;">🔮 Запланировано для реализации в следующих лабораторных работах:</h4>
+                <h4 style="margin: 0 0 0.5rem 0; color: #f8fafc;">🔮 Planned Architecture for Future Labs:</h4>
                 <ul style="margin: 0; color: #cbd5e1; line-height: 1.8;">
-                    <li><strong>Lab 6:</strong> Ленивые бесконечные потоки данных, генераторы цен и доступности (<code>core/lazy.py</code>).</li>
-                    <li><strong>Lab 8:</strong> Реактивные стримы событий, шина событий (Event Bus) и FRP-пайплайны (<code>core/frp.py</code>).</li>
+                    <li><strong>Lab 5:</strong> Lazy infinite streams, date and pricing generators (<code>core/lazy.py</code>).</li>
+                    <li><strong>Lab 6:</strong> Functional Reactive Programming (FRP), Observable event bus (<code>core/frp.py</code>).</li>
+                    <li><strong>Lab 7:</strong> Function composition pipelines and service layer (<code>core/compose.py</code>, <code>core/service.py</code>).</li>
+                    <li><strong>Lab 8:</strong> Analytical reports and metric aggregations (<code>core/report.py</code>).</li>
                 </ul>
             </div>
             """,
@@ -539,17 +679,20 @@ def main() -> None:
         c1, c2 = st.columns(2)
         with c1:
             st.markdown("""
-                ##### Planned Architecture for FRP:
-                - Observable event streams for price fluctuations.
-                - Reactive subscribers for room hold expirations.
-                - Real-time audit log based on immutable `Event` structures.
+                ##### Future Modules Architecture:
+                - **Lab 5:** Infinite generators for date ranges and lazy price simulators.
+                - **Lab 6:** Observable streams for real-time price updates and cart holds.
+                - **Lab 7:** Currying, pipe combinators, and pure booking service layer.
+                - **Lab 8:** Pure financial reports derived from immutable `Event` streams.
                 """)
         with c2:
             st.markdown("""
-                ##### Module Status:
-                - `core/lazy.py`: Stub prepared.
-                - `core/frp.py`: Stub prepared.
-                - `core/service.py`: Stub prepared.
+                ##### Modules Status (Clean Stubs):
+                - `core/lazy.py`: Lab 5 stub.
+                - `core/frp.py`: Lab 6 stub.
+                - `core/compose.py`: Lab 7 stub.
+                - `core/service.py`: Lab 7 stub.
+                - `core/report.py`: Lab 8 stub.
                 """)
 
     # ========================================================================
@@ -584,12 +727,12 @@ def main() -> None:
         st.markdown("---")
         st.markdown("### ⚡ Quotes (cached)")
         st.write(
-            "Прогон комбинированного функционального расчёта `quote_offer` "
-            "(`nightly_sum` + `recursive_apply_rules` + `check_dates_available_rec` под `@lru_cache`)."
+            "Benchmark of combined functional pricing `quote_offer` "
+            "(`nightly_sum` + `recursive_apply_rules` + `check_dates_available_rec` under `@lru_cache`)."
         )
 
         n_req = st.slider(
-            "Число запросов для прогона",
+            "Number of Queries for Benchmark",
             min_value=50,
             max_value=500,
             value=300,
@@ -597,7 +740,7 @@ def main() -> None:
             key="rep_quotes_cnt",
         )
         if st.button(
-            "🚀 Запустить замер quote_offer (cached vs uncached)",
+            "🚀 Run quote_offer Benchmark (cached vs uncached)",
             key="btn_rep_quote_offer",
         ):
             sample_rules = (
@@ -646,18 +789,127 @@ def main() -> None:
 
             qc1, qc2, qc3, qc4 = st.columns(4)
             with qc1:
-                st.metric("Без кэша (Uncached)", f"{t_uncached * 1000:.2f} ms")
+                st.metric("Uncached Time", f"{t_uncached * 1000:.2f} ms")
             with qc2:
-                st.metric("С кэшем (LRU Cache)", f"{t_cached * 1000:.2f} ms")
+                st.metric("Cached Time (LRU)", f"{t_cached * 1000:.2f} ms")
             with qc3:
-                st.metric("Ускорение (Speedup)", f"{speedup:.1f}x")
+                st.metric("Speedup Factor", f"{speedup:.1f}x")
             with qc4:
-                st.metric("Попадания в кэш", f"{info.hits} / {n_req}")
+                st.metric("Cache Hits", f"{info.hits} / {n_req}")
 
             st.success(
-                f"**Пример результата:** `(total_amount={format_cents(sample_res[0])}, is_available={sample_res[1]})` "
-                f"&mdash; кортеж: `({sample_res[0]}, {sample_res[1]})`"
+                f"**Sample Result:** `(total_amount={format_cents(sample_res[0])}, is_available={sample_res[1]})` "
+                f"&mdash; tuple: `({sample_res[0]}, {sample_res[1]})`"
             )
+
+        st.markdown("---")
+        st.markdown("### 🛡️ Validate & Calculate Booking (Lab 4)")
+        st.write(
+            "Pure monadic booking pipeline (`Either[dict, Booking]`) without `try`/`except`. "
+            "Reuses `quote_offer` for price recalculation and strict validation."
+        )
+
+        scenario_name = st.selectbox(
+            "Select validation scenario",
+            [
+                "1. Valid Booking (Right[Booking])",
+                "2. Capacity Exceeded (Left: capacity_exceeded)",
+                "3. Unavailable Dates (Left: date_unavailable)",
+                "4. Invalid Date Range (Left: invalid_date_range)",
+                "5. Empty Cart (Left: empty_booking)",
+            ],
+            key="l4_rep_sel_scenario",
+        )
+
+        if st.button(
+            "🚀 Run Validation Scenario (Pure Either)",
+            key="l4_rep_btn_run_scenario",
+        ):
+            guest_sample = guests[0]
+            if "1. Valid" in scenario_name:
+                item = CartItem(
+                    id="cart_rep_valid",
+                    guest_id=guest_sample.id,
+                    room_type_id=room_types[0].id,
+                    rate_id=rate_plans[0].id,
+                    checkin="2026-06-01",
+                    checkout="2026-06-04",
+                    guests_count=1,
+                    total_price=0,
+                )
+                items_tuple = (item,)
+                avails_tuple = availabilities
+            elif "2. Capacity" in scenario_name:
+                item = CartItem(
+                    id="cart_rep_overcap",
+                    guest_id=guest_sample.id,
+                    room_type_id=room_types[0].id,
+                    rate_id=rate_plans[0].id,
+                    checkin="2026-06-01",
+                    checkout="2026-06-04",
+                    guests_count=room_types[0].capacity + 5,
+                    total_price=0,
+                )
+                items_tuple = (item,)
+                avails_tuple = availabilities
+            elif "3. Unavailable" in scenario_name:
+                item = CartItem(
+                    id="cart_rep_unavail",
+                    guest_id=guest_sample.id,
+                    room_type_id=room_types[0].id,
+                    rate_id=rate_plans[0].id,
+                    checkin="2026-06-01",
+                    checkout="2026-06-04",
+                    guests_count=1,
+                    total_price=0,
+                )
+                items_tuple = (item,)
+                avails_tuple = ()  # No availability
+            elif "4. Invalid" in scenario_name:
+                item = CartItem(
+                    id="cart_rep_invdates",
+                    guest_id=guest_sample.id,
+                    room_type_id=room_types[0].id,
+                    rate_id=rate_plans[0].id,
+                    checkin="2026-06-08",
+                    checkout="2026-06-02",  # Checkout before checkin
+                    guests_count=1,
+                    total_price=0,
+                )
+                items_tuple = (item,)
+                avails_tuple = availabilities
+            else:  # Empty cart
+                items_tuple = ()
+                avails_tuple = availabilities
+
+            res_scenario = validate_and_calculate_booking(
+                booking_id="bk_rep_l4",
+                guest=guest_sample,
+                items=items_tuple,
+                prices=prices,
+                availability=avails_tuple,
+                rules=DEFAULT_RULES,
+                room_types=room_types,
+                rates=rate_plans,
+            )
+
+            if isinstance(res_scenario, Right):
+                bk = res_scenario.value
+                st.success("✅ Validation Succeeded! Container: `Right(Booking)`")
+                sc1, sc2, sc3 = st.columns(3)
+                with sc1:
+                    st.metric("Booking ID", bk.id)
+                with sc2:
+                    st.metric("Guest", guest_sample.name)
+                with sc3:
+                    st.metric("Total Amount", format_cents(bk.total))
+                st.write(f"• Status: `{bk.status}` &middot; Items: `{len(bk.items)}`")
+            elif isinstance(res_scenario, Left):
+                err = res_scenario.error
+                st.error("❌ Validation Rejected! Container: `Left(error)`")
+                st.write(f"• **Error Code:** `{err.get('code')}`")
+                st.write(f"• **Message:** {err.get('message')}")
+                st.json(err)
 
     # ========================================================================
     # TAB 7: TESTS RUNNER
@@ -665,7 +917,7 @@ def main() -> None:
     with tabs[6]:
         st.subheader("Automated Test Suite Runner")
         st.write(
-            "Run pytest against lab test suites (`tests/test_lab1.py`, `tests/test_lab2.py`, `tests/test_lab3.py`)."
+            "Run pytest against lab test suites (`tests/test_lab1.py`, `tests/test_lab2.py`, `tests/test_lab3.py`, `tests/test_lab4.py`)."
         )
 
         col_sel, col_btn = st.columns([2, 1])
@@ -673,10 +925,11 @@ def main() -> None:
             test_target = st.selectbox(
                 "Select Test Suite",
                 [
-                    "All Labs (test_lab1 + test_lab2 + test_lab3)",
+                    "All Labs (test_lab1 + test_lab2 + test_lab3 + test_lab4)",
                     "Lab 1 (Domain & Transforms)",
                     "Lab 2 (Closures & Recursion)",
                     "Lab 3 (Memoization & Benchmarks)",
+                    "Lab 4 (Monads & Pure Validation)",
                 ],
             )
 
@@ -693,6 +946,8 @@ def main() -> None:
                 target_file = "tests/test_lab2.py"
             elif "Lab 3" in test_target:
                 target_file = "tests/test_lab3.py"
+            elif "Lab 4" in test_target:
+                target_file = "tests/test_lab4.py"
 
             with st.spinner(f"Running pytest {target_file}..."):
                 proc = subprocess.run(
@@ -727,6 +982,7 @@ def main() -> None:
                - `tests/test_lab1.py`: Tests for Lab 1 (Domain & Transforms)
                - `tests/test_lab2.py`: Tests for Lab 2 (Closures, Lambdas, Recursion)
                - `tests/test_lab3.py`: Tests for Lab 3 (Memoization & Benchmarks)
+               - `tests/test_lab4.py`: Tests for Lab 4 (Monads & Pure Validation Pipelines)
             """)
 
 

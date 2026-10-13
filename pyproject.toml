@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hotel-booking-fp"
+version = "0.4.0"
+description = "Pure Functional Programming Hotel & Room Booking System"
+requires-python = ">=3.10"
+dependencies = [
+    "streamlit>=1.64.0",
+    "pandas>=3.0.6",
+    "pytest>=9.1.1",
+    "black>=24.0.0",
+    "ruff>=0.4.0",
+]
+
+[tool.black]
+line-length = 88
+target-version = ["py310", "py311"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+ignore = ["E501", "E731"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]

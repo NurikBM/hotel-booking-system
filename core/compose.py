@@ -1,4 +1,4 @@
-"""Композиция функций и пайплайны (compose, pipe, curry).
+"""Function composition and pipelines (compose, pipe, curry).
 
-Реализуется в Lab 4–8.
+Planned for implementation in Lab 7.
 """

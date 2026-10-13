@@ -1,4 +1,4 @@
-"""Сервисный слой бронирования и бизнес-процессы (BookingService).
+"""Booking service layer and business workflows (BookingService).
 
-Реализуется в Lab 4–8.
+Planned for implementation in Lab 7.
 """

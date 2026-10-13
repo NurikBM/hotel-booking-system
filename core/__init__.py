@@ -4,6 +4,7 @@ Labs implemented:
 - Lab 1: Immutable Domain Models & Transformations (core.domain, core.transforms)
 - Lab 2: Closures, Lambdas & Recursion (core.transforms, core.recursion)
 - Lab 3: Pure Memoization, Caching & Performance Benchmarking (core.memo)
+- Lab 4: Monads & Pure Validation Pipelines (core.ftypes)
 """
 
 from core.domain import (
@@ -18,6 +19,22 @@ from core.domain import (
     RatePlan,
     RoomType,
     Rule,
+)
+from core.ftypes import (
+    DEFAULT_RULES,
+    Either,
+    Left,
+    Maybe,
+    Nothing,
+    Right,
+    Some,
+    maybe_to_either,
+    safe_rate,
+    safe_room_type,
+    validate_and_calculate_booking,
+    validate_booking,
+    validate_cart_item,
+    validate_dates,
 )
 from core.memo import (
     BenchmarkResult,
@@ -54,20 +71,27 @@ from core.transforms import (
 )
 
 __all__ = [
+    "DEFAULT_RULES",
     "Availability",
     "BenchmarkResult",
     "Booking",
     "BookingQuote",
     "CacheInfo",
     "CartItem",
+    "Either",
     "Event",
     "Guest",
     "Hotel",
+    "Left",
+    "Maybe",
+    "Nothing",
     "Payment",
     "Price",
     "RatePlan",
+    "Right",
     "RoomType",
     "Rule",
+    "Some",
     "apply_discount",
     "benchmark_speedup",
     "by_capacity",
@@ -80,6 +104,7 @@ __all__ = [
     "generate_date_range",
     "hold_item",
     "load_seed",
+    "maybe_to_either",
     "memoize",
     "memoized_nightly_sum",
     "nightly_sum",
@@ -89,7 +114,13 @@ __all__ = [
     "recursive_find_cheapest_quote",
     "recursive_search_available_quotes",
     "remove_hold",
+    "safe_rate",
+    "safe_room_type",
     "sort_hotels_by_stars",
     "sort_prices_by_amount",
     "sort_rooms_by_capacity",
+    "validate_and_calculate_booking",
+    "validate_booking",
+    "validate_cart_item",
+    "validate_dates",
 ]

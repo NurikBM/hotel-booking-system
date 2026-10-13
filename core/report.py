@@ -1,4 +1,4 @@
-"""Генерация аналитических отчётов и агрегаций.
+"""Analytical reporting and metric aggregations.
 
-Реализуется в Lab 4–8.
+Planned for implementation in Lab 8.
 """

@@ -48,7 +48,7 @@ def load_seed(
     tuple[Guest, ...],
 ]:
     """Load JSON seed file into pure, immutable tuple domain models."""
-    with open(path, "r", encoding="utf-8") as f:
+    with open(path, encoding="utf-8") as f:
         raw = json.load(f)
 
     hotels = tuple(
@@ -74,29 +74,54 @@ def load_seed(
         for r in raw.get("room_types", ())
     )
 
+    room_hotel_map = {
+        str(r["id"]): str(r["hotel_id"]) for r in raw.get("room_types", ())
+    }
     rate_plans = tuple(
         RatePlan(
             id=str(rp["id"]),
             room_type_id=str(rp["room_type_id"]),
-            name=str(rp["name"]),
+            name=str(rp.get("name", rp.get("title", ""))),
             meals=str(rp.get("meals", "none")),
             cancellation=str(rp.get("cancellation", "standard")),
             price_factor=float(rp.get("price_factor", 1.0)),
+            hotel_id=str(
+                rp.get(
+                    "hotel_id",
+                    room_hotel_map.get(str(rp["room_type_id"]), ""),
+                )
+            ),
+            title=str(rp.get("title", rp.get("name", ""))),
+            refundable=bool(
+                rp.get(
+                    "refundable",
+                    rp.get("cancellation") != "non-refundable",
+                )
+            ),
+            cancel_before_days=int(
+                rp.get(
+                    "cancel_before_days",
+                    1 if rp.get("cancellation") != "non-refundable" else 0,
+                )
+            ),
         )
         for rp in raw.get("rate_plans", ())
     )
 
     prices = tuple(
         Price(
-            date=str(p["date"]),
+            id=str(p.get("id", f"pr_{p['rate_id']}_{p['date']}")),
             rate_id=str(p["rate_id"]),
+            date=str(p["date"]),
             amount=int(p["amount"]),
+            currency=str(p.get("currency", "KZT")),
         )
         for p in raw.get("prices", ())
     )
 
     availabilities = tuple(
         Availability(
+            id=str(a.get("id", f"av_{a['room_type_id']}_{a['date']}")),
             date=str(a["date"]),
             room_type_id=str(a["room_type_id"]),
             available_rooms=int(a["available_rooms"]),
@@ -244,7 +269,7 @@ def by_price_range(
 ) -> Callable[[Price], bool]:
     """Closure factory: predicate filtering a single nightly Price within [min_amt, max_amt].
 
-    Логичнее применять к отдельной цене за ночь, так как это базовый атомарный элемент тарифа в календаре цен.
+    It is more logical to apply to an individual nightly price because it is the base atomic pricing element in the calendar.
     """
     if min_amt < 0 or max_amt < min_amt:
         raise ValueError(f"Invalid price bounds: min={min_amt}, max={max_amt}")
