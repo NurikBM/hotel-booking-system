@@ -41,6 +41,12 @@ from core.ftypes import (
     validate_and_calculate_booking,
     validate_cart_item,
 )
+from core.lazy import (
+    drop_lazy,
+    lazy_calendar_stream,
+    lazy_offers,
+    take_lazy,
+)
 from core.memo import (
     benchmark_speedup,
     memoize,
@@ -83,7 +89,7 @@ def format_cents(cents: int) -> str:
 
 def main() -> None:
     st.set_page_config(
-        page_title="Hotel FP System (Labs 1–4)",
+        page_title="Hotel FP System (Labs 1–5)",
         page_icon="🏨",
         layout="wide",
         initial_sidebar_state="collapsed",
@@ -101,7 +107,7 @@ def main() -> None:
                 </div>
                 <div style="text-align: right;">
                     <span style="background: #0369a1; color: #e0f2fe; padding: 0.35rem 0.75rem; border-radius: 9999px; font-size: 0.8rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em;">
-                        Lab 1 + Lab 2 + Lab 3 + Lab 4
+                        Lab 1 + Lab 2 + Lab 3 + Lab 4 + Lab 5
                     </span>
                 </div>
             </div>
@@ -150,7 +156,7 @@ def main() -> None:
 
         st.markdown("---")
 
-        c1, c2, c3, c4 = st.columns(4)
+        c1, c2, c3, c4, c5 = st.columns(5)
         with c1:
             st.markdown("""
                 ### 🧱 Lab 1: Immutable Domain
@@ -186,6 +192,15 @@ def main() -> None:
                 - **Pure Lookups**: `safe_room_type`, `safe_rate`, `maybe_to_either`.
                 - **Validation Pipeline**: `validate_dates`, `validate_cart_item`, `validate_booking`.
                 - **Pure Composition**: `validate_and_calculate_booking` returns `Right(Booking)` or `Left(error)`.
+                """)
+        with c5:
+            st.markdown("""
+                ### ⏳ Lab 5: Lazy Evaluation
+                - **Pure Generators**: `yield`-based iterators evaluated on demand.
+                - **Calendar Streams**: `lazy_calendar_stream` for continuous dates.
+                - **Availability**: `iter_available_days` yields without list materialization.
+                - **Deferred Offers**: `lazy_offers` streams matching offers.
+                - **Stream Combinators**: `take_lazy` and `drop_lazy` for lazy pagination.
                 """)
 
     # ========================================================================
@@ -497,11 +512,12 @@ def main() -> None:
     with tabs[3]:
         st.subheader("Functional Pipelines & Memoization Engine")
 
-        p_tab1, p_tab2, p_tab3 = st.tabs(
+        p_tab1, p_tab2, p_tab3, p_tab4 = st.tabs(
             [
                 "Cart Hold Pipeline (Lab 1)",
                 "Memoized Pricing (Lab 3)",
                 "Speedup Benchmark (Lab 3)",
+                "Lazy Evaluation Streams (Lab 5)",
             ]
         )
 
@@ -655,6 +671,71 @@ def main() -> None:
                     f"Benchmark completed successfully! Memoization achieved a **{bench_res.speedup_factor:.1f}x speedup** "
                     f"with {bench_res.cache_info.hits} hits out of {bench_res.iterations} iterations."
                 )
+        with p_tab4:
+            st.markdown(
+                "#### ⏳ Lazy Offers Stream & Pipeline (`lazy_offers`, `take_lazy`)"
+            )
+            st.write(
+                "Evaluates search offers on demand using pure generator streams (`yield`), "
+                "terminating execution as soon as the requested quota is met."
+            )
+            lz_c1, lz_c2, lz_c3 = st.columns([1, 1, 1])
+            with lz_c1:
+                lz_budget = st.slider(
+                    "Max Budget (KZT)",
+                    min_value=20000,
+                    max_value=200000,
+                    value=80000,
+                    step=10000,
+                    key="l5_slider_budget",
+                )
+            with lz_c2:
+                lz_k = st.slider(
+                    "Take First K Offers",
+                    min_value=1,
+                    max_value=10,
+                    value=4,
+                    key="l5_slider_k",
+                )
+            with lz_c3:
+                lz_skip = st.slider(
+                    "Skip Initial Offers (drop_lazy)",
+                    min_value=0,
+                    max_value=5,
+                    value=0,
+                    key="l5_slider_skip",
+                )
+
+            if st.button(
+                "🌊 Stream Matching Offers Lazily", key="l5_btn_stream_offers"
+            ):
+                budget_cents = lz_budget * 100
+                offer_stream = lazy_offers(
+                    hotels=hotels,
+                    room_types=room_types,
+                    rates=rate_plans,
+                    prices=prices,
+                    avail=availabilities,
+                    predicate=lambda h, r, rt, p: p <= budget_cents,
+                    checkin="2026-06-01",
+                    checkout="2026-06-04",
+                )
+                if lz_skip > 0:
+                    offer_stream = drop_lazy(offer_stream, lz_skip)
+
+                collected_offers = tuple(take_lazy(offer_stream, lz_k))
+
+                if collected_offers:
+                    st.success(
+                        f"Lazily materialized {len(collected_offers)} offer(s) without processing entire dataset!"
+                    )
+                    for idx, (h, r, rt, p) in enumerate(collected_offers, 1):
+                        st.markdown(
+                            f"**{idx}. {h.name}** ({h.city}) &mdash; *{r.name}* "
+                            f"(Cap: {r.capacity}) &middot; Plan: `{rt.name or rt.title}` &middot; **Total: {format_cents(p)}**"
+                        )
+                else:
+                    st.warning("No offers matched the lazy filter predicate.")
 
     # ========================================================================
     # TAB 5: ASYNC / FRP (LABS 5–8 ROADMAP)
@@ -911,6 +992,51 @@ def main() -> None:
                 st.write(f"• **Message:** {err.get('message')}")
                 st.json(err)
 
+        st.markdown("---")
+        st.markdown("### ⏳ Lazy Stream Sampling & Top-K Offers (Lab 5)")
+        st.write(
+            "Lazy generator evaluation for Reports: sample continuous calendar dates "
+            "or stream the top-K matching hotel offers on demand without materializing the full dataset."
+        )
+
+        r_lz_col1, r_lz_col2 = st.columns(2)
+        with r_lz_col1:
+            st.markdown("##### 📅 Lazy Infinite Calendar Stream")
+            st.caption("Uses `lazy_calendar_stream` + `take_lazy`")
+            sample_days_cnt = st.slider(
+                "Number of Days to Sample", 3, 21, 7, key="l5_rep_slider_days"
+            )
+            if st.button("Generate Date Stream Sample", key="l5_rep_btn_stream_dates"):
+                sampled_dates = tuple(
+                    take_lazy(lazy_calendar_stream("2026-06-01"), sample_days_cnt)
+                )
+                st.success(f"Streamed {len(sampled_dates)} calendar days on demand:")
+                st.code(" -> ".join(sampled_dates), language="text")
+
+        with r_lz_col2:
+            st.markdown("##### 🏆 First K Budget Offers (Lazy Stream)")
+            st.caption("Uses `lazy_offers` + `take_lazy`")
+            k_offers_cnt = st.slider("Top K Offers", 1, 8, 3, key="l5_rep_slider_k")
+            if st.button("Sample Top K Offers Lazily", key="l5_rep_btn_sample_offers"):
+                offer_gen = lazy_offers(
+                    hotels=hotels,
+                    room_types=room_types,
+                    rates=rate_plans,
+                    prices=prices,
+                    avail=availabilities,
+                    predicate=lambda h, r, rt, p: p <= 9000000,
+                    checkin="2026-06-01",
+                    checkout="2026-06-04",
+                )
+                sampled_offers = tuple(take_lazy(offer_gen, k_offers_cnt))
+                st.success(
+                    f"Yielded {len(sampled_offers)} offers lazily (budget ≤ 90,000 KZT):"
+                )
+                for i, (h, r, rt, p) in enumerate(sampled_offers, 1):
+                    st.write(
+                        f"**{i}. {h.name}** ({h.city}) &middot; *{r.name}* &middot; Plan: `{rt.name or rt.title}` &middot; **{format_cents(p)}**"
+                    )
+
     # ========================================================================
     # TAB 7: TESTS RUNNER
     # ========================================================================
@@ -925,11 +1051,12 @@ def main() -> None:
             test_target = st.selectbox(
                 "Select Test Suite",
                 [
-                    "All Labs (test_lab1 + test_lab2 + test_lab3 + test_lab4)",
+                    "All Labs (Labs 1–5)",
                     "Lab 1 (Domain & Transforms)",
                     "Lab 2 (Closures & Recursion)",
                     "Lab 3 (Memoization & Benchmarks)",
                     "Lab 4 (Monads & Pure Validation)",
+                    "Lab 5 (Lazy Streams & Evaluation)",
                 ],
             )
 
@@ -948,6 +1075,8 @@ def main() -> None:
                 target_file = "tests/test_lab3.py"
             elif "Lab 4" in test_target:
                 target_file = "tests/test_lab4.py"
+            elif "Lab 5" in test_target:
+                target_file = "tests/test_lab5.py"
 
             with st.spinner(f"Running pytest {target_file}..."):
                 proc = subprocess.run(

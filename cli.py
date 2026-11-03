@@ -1,6 +1,6 @@
 """Terminal CLI Application: Hotel & Room Booking System.
 
-Pure functional programming interactive demonstration runner (Labs 1–4).
+Pure functional programming interactive demonstration runner (Labs 1–5).
 Run this file in your terminal:
   $ python3 cli.py
 """
@@ -21,6 +21,12 @@ from core.ftypes import (
     Some,
     safe_rate,
     validate_and_calculate_booking,
+)
+from core.lazy import (
+    iter_available_days,
+    lazy_calendar_stream,
+    lazy_offers,
+    take_lazy,
 )
 from core.memo import (
     benchmark_speedup,
@@ -343,6 +349,43 @@ def show_validation_pipeline() -> None:
         )
 
 
+def show_lazy_streams() -> None:
+    print_header("7. Lazy Streams & Deferred Evaluation (Lab 5)")
+    hotels, rooms, rates, prices, avails, _ = get_data()
+
+    print("--- 7.1 Lazy Calendar Stream (Infinite Generator) ---")
+    cal_stream = lazy_calendar_stream("2026-06-01")
+    first_7_days = tuple(take_lazy(cal_stream, 7))
+    print(f"First 7 days yielded on demand: {', '.join(first_7_days)}")
+
+    print("\n--- 7.2 Lazy Availability Days Generator ---")
+    avail_gen = iter_available_days(avails, rooms[0].id)
+    first_3_slots = tuple(take_lazy(avail_gen, 3))
+    print(f"Room {rooms[0].name} first 3 slots:")
+    for dt, cnt in first_3_slots:
+        print(f"  • Date: {dt} | Available rooms: {cnt}")
+
+    print("\n--- 7.3 Lazy Offer Stream with Budget Filter ---")
+    budget_cents = 8000000  # 80,000 KZT
+    offers_gen = lazy_offers(
+        hotels=hotels,
+        room_types=rooms,
+        rates=rates,
+        prices=prices,
+        avail=avails,
+        predicate=lambda h, r, rt, p: p <= budget_cents,
+        checkin="2026-06-01",
+        checkout="2026-06-04",
+    )
+    # Take first 3 matching offers
+    first_offers = tuple(take_lazy(offers_gen, 3))
+    print(f"Top 3 offers under {format_cents(budget_cents)} (evaluated lazily):")
+    for i, (h, r, rt, p) in enumerate(first_offers, 1):
+        print(
+            f"  {i}. {h.name} ({h.city}) - {r.name} | Rate: {rt.name or rt.title} | {format_cents(p)}"
+        )
+
+
 def run_tests() -> None:
     print_header("7. Running Test Suite (pytest tests/)")
     subprocess.run([sys.executable, "-m", "pytest", "-v", "tests/"], check=False)
@@ -350,7 +393,7 @@ def run_tests() -> None:
 
 def main() -> None:
     while True:
-        print_header("Hotel FP System — Main Menu (Labs 1–4)")
+        print_header("Hotel FP System — Main Menu (Labs 1–5)")
         print("1. View Seed Dataset Statistics (Lab 1)")
         print("2. Closure-Based Filters & Lambdas (Lab 2)")
         print("3. Recursive Hierarchical Search (Lab 2)")
@@ -374,6 +417,8 @@ def main() -> None:
         elif choice == "6":
             show_validation_pipeline()
         elif choice == "7":
+            show_lazy_streams()
+        elif choice == "8":
             run_tests()
         elif choice == "0":
             print("\nExiting. Goodbye!\n")

@@ -85,16 +85,24 @@ class Price:
 
 @dataclass(frozen=True)
 class Availability:
-    """Number of available rooms of a given type on a date."""
+    """Number of available rooms of a given type on a date.
+
+    Supports both spec name `available` and legacy alias `available_rooms`.
+    """
 
     date: str  # YYYY-MM-DD
     room_type_id: str
-    available_rooms: int
+    available_rooms: int = 0
     id: str = ""
+    available: int = 0
 
     def __post_init__(self) -> None:
         if not self.id:
             object.__setattr__(self, "id", f"av_{self.room_type_id}_{self.date}")
+        if self.available == 0 and self.available_rooms != 0:
+            object.__setattr__(self, "available", self.available_rooms)
+        elif self.available_rooms == 0 and self.available != 0:
+            object.__setattr__(self, "available_rooms", self.available)
 
 
 @dataclass(frozen=True)
