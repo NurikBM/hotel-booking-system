@@ -1,6 +1,6 @@
 """Terminal CLI Application: Hotel & Room Booking System.
 
-Pure functional programming interactive demonstration runner (Labs 1–5).
+Pure functional programming interactive demonstration runner (Labs 1–7).
 Run this file in your terminal:
   $ python3 cli.py
 """
@@ -12,7 +12,15 @@ import subprocess
 import sys
 import time
 
-from core.domain import CartItem, Rule
+from core.compose import pipe
+from core.domain import Booking, CartItem, Rule
+from core.frp import (
+    booking_payload,
+    default_bus,
+    hold_payload,
+    price_change_payload,
+    search_payload,
+)
 from core.ftypes import (
     DEFAULT_RULES,
     Left,
@@ -39,6 +47,7 @@ from core.recursion import (
     recursive_find_cheapest_quote,
     recursive_search_available_quotes,
 )
+from core.service import build_services, validate_all
 from core.transforms import (
     by_capacity,
     by_city,
@@ -386,24 +395,81 @@ def show_lazy_streams() -> None:
         )
 
 
+def show_frp_event_bus() -> None:
+    print_header("8. FRP Event Bus & Live Views (Lab 6)")
+    hotels, room_types, rates, prices, avail, guests = get_data()
+    rt = room_types[0]
+    rate = next(r for r in rates if r.room_type_id == rt.id)
+    item = CartItem(
+        "ci_1", guests[0].id, rt.id, rate.id, "2026-06-01", "2026-06-03", 1, 500
+    )
+    booking = Booking("bk_1", guests[0].id, (item,), item.total_price)
+
+    bus = default_bus()
+    bus = bus.publish("SEARCH", search_payload("Almaty", 2, 5))
+    bus = bus.publish("HOLD", hold_payload(item))
+    print(f"After HOLD   -> active holds: {len(bus.state['active_holds'])}")
+    bus = bus.publish("BOOKED", booking_payload(booking))
+    print(f"After BOOKED -> active holds: {len(bus.state['active_holds'])}")
+    print(f"               occupancy: {bus.state['occupancy']}")
+    bus = bus.publish(
+        "PRICE_CHANGED", price_change_payload(rate.id, "2026-06-01", 100, 110)
+    )
+    print(f"Price changes: {len(bus.state['price_changes'])}")
+    bus = bus.publish("CANCELLED", booking_payload(booking))
+    print(
+        f"After CANCELLED -> booking status: {bus.state['latest_bookings'][0]['status']}"
+    )
+    print(f"Event log: {[e.name for e in bus.log]}")
+
+
+def show_services() -> None:
+    print_header("9. Composition & Service Facades (Lab 7)")
+    hotels, room_types, rates, prices, avail, guests = get_data()
+    search_svc, quote_svc, booking_svc = build_services(
+        room_types, rates, prices, avail, DEFAULT_RULES
+    )
+    print(f"pipe(5, +1, *2) = {pipe(5, lambda x: x + 1, lambda x: x * 2)}")
+    offers = lazy_offers(
+        hotels, room_types, rates, prices, avail, None, "2026-06-01", "2026-06-04"
+    )
+    ids = search_svc.search(
+        {"offers": offers, "city": "Almaty", "guests": 2, "limit": 3}
+    )
+    print(f"1. SearchService -> {len(ids)} offer ids: {ids[:1]}...")
+    if not ids:
+        return
+    item = CartItem(
+        "ci_demo", guests[0].id, ids[0][1], ids[0][2], "2026-06-01", "2026-06-04", 2, 0
+    )
+    print(f"2. QuoteService  -> {format_cents(quote_svc.quote(item))}")
+    check = validate_all(booking_svc.validators)((item,))
+    print(f"3. Validators    -> {type(check).__name__}")
+    result = booking_svc.confirm(guests[0], (item,))
+    print(f"4. BookingService.confirm -> {type(result).__name__}")
+
+
 def run_tests() -> None:
-    print_header("7. Running Test Suite (pytest tests/)")
+    print_header("10. Running Test Suite (pytest tests/)")
     subprocess.run([sys.executable, "-m", "pytest", "-v", "tests/"], check=False)
 
 
 def main() -> None:
     while True:
-        print_header("Hotel FP System — Main Menu (Labs 1–5)")
+        print_header("Hotel FP System — Main Menu (Labs 1–7)")
         print("1. View Seed Dataset Statistics (Lab 1)")
         print("2. Closure-Based Filters & Lambdas (Lab 2)")
         print("3. Recursive Hierarchical Search (Lab 2)")
         print("4. Recursive Rules Engine (Lab 2)")
         print("5. Pure Memoization & Speedup Benchmark (Lab 3)")
         print("6. Monadic Validation Pipeline (Lab 4 Maybe/Either)")
-        print("7. Run Automated Test Suite (pytest)")
+        print("7. Lazy Streams & Deferred Evaluation (Lab 5)")
+        print("8. FRP Event Bus & Live Views (Lab 6)")
+        print("9. Composition & Service Facades (Lab 7)")
+        print("10. Run Automated Test Suite (pytest)")
         print("0. Exit")
 
-        choice = input("\nSelect an option [0-7]: ").strip()
+        choice = input("\nSelect an option [0-10]: ").strip()
         if choice == "1":
             show_seed_stats()
         elif choice == "2":
@@ -419,6 +485,10 @@ def main() -> None:
         elif choice == "7":
             show_lazy_streams()
         elif choice == "8":
+            show_frp_event_bus()
+        elif choice == "9":
+            show_services()
+        elif choice == "10":
             run_tests()
         elif choice == "0":
             print("\nExiting. Goodbye!\n")

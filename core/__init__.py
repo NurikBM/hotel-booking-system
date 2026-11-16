@@ -5,6 +5,9 @@ Labs implemented:
 - Lab 2: Closures, Lambdas & Recursion (core.transforms, core.recursion)
 - Lab 3: Pure Memoization, Caching & Performance Benchmarking (core.memo)
 - Lab 4: Monads & Pure Validation Pipelines (core.ftypes)
+- Lab 5: Lazy Evaluation & Streams (core.lazy)
+- Lab 6: FRP Event Bus (core.frp)
+- Lab 7: Composition & Service Facades (core.compose, core.service)
 """
 
 from core.domain import (

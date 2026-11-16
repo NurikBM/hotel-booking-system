@@ -2,18 +2,19 @@
 
 Pure Functional Programming Coursework:
 Tabs:
-1. Overview: Architecture, Lab 1–3 concepts & key dataset metrics.
+1. Overview: Architecture, Lab 1–7 concepts & key dataset metrics.
 2. Data: Interactive seed database viewer (seed.json).
-3. Functional Core: Closures, lambdas & recursive algorithms (Lab 2).
-4. Pipelines: Map/Reduce, cart holds & Lab 3 memoization / speedup benchmark.
-5. Async/FRP: Architectural preview for Lab 6 & Lab 8.
-6. Reports: Pure statistical summaries & distributions.
-7. Tests: Interactive pytest execution across test_lab1, test_lab2, test_lab3.
+3. Functional Core: Closures, recursion (Lab 2), Maybe/Either (Lab 4), compose/pipe (Lab 7).
+4. Pipelines: Cart holds, memoization, lazy streams (Lab 5), Search -> Quote -> Confirm (Lab 7).
+5. Async/FRP: Live event bus and views (Lab 6). Async batch quoting arrives in Lab 8.
+6. Reports: Statistics, cached quotes, validation, lazy streams, service summary (Lab 7).
+7. Tests: Interactive pytest execution across test_lab1 .. test_lab7.
 8. About: Academic specification, course standards & invariants.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import os
 import subprocess
 import sys
@@ -22,8 +23,10 @@ import time
 import streamlit as st
 
 # Core functional imports
+from core.compose import compose, pipe
 from core.domain import (
     Availability,
+    Booking,
     CartItem,
     Guest,
     Hotel,
@@ -31,6 +34,13 @@ from core.domain import (
     RatePlan,
     RoomType,
     Rule,
+)
+from core.frp import (
+    booking_payload,
+    default_bus,
+    hold_payload,
+    price_change_payload,
+    search_payload,
 )
 from core.ftypes import (
     DEFAULT_RULES,
@@ -59,6 +69,7 @@ from core.recursion import (
     recursive_find_cheapest_quote,
     recursive_search_available_quotes,
 )
+from core.service import build_services, validate_all
 from core.transforms import (
     by_city,
     calculate_cart_total,
@@ -87,9 +98,47 @@ def format_cents(cents: int) -> str:
     return f"{cents / 100:,.2f} KZT"
 
 
+def search_step(search_svc, offers_args, city, guests_n, max_total, checkin, checkout):
+    """Lab 7 step 1: SearchService over a lazy offer stream (returns offer id triples)."""
+    hotels_, rooms_, rates_, prices_, avail_ = offers_args
+    offers = lazy_offers(
+        hotels_, rooms_, rates_, prices_, avail_, None, checkin, checkout
+    )
+    return search_svc.search(
+        {
+            "offers": offers,
+            "city": city,
+            "guests": guests_n,
+            "max_total": max_total,
+            "limit": 8,
+        }
+    )
+
+
+def scenario_steps(services, guest, offer_id, guests_n, checkin, checkout):
+    """Lab 7 steps 2-4: quote, validate and confirm one offer through the facades."""
+    _search_svc, quote_svc, booking_svc = services
+    item = CartItem(
+        "ci_demo",
+        guest.id,
+        offer_id[1],
+        offer_id[2],
+        checkin,
+        checkout,
+        guests_n,
+        0,
+    )
+    return {
+        "item": item,
+        "quote": quote_svc.quote(item),
+        "validation": validate_all(booking_svc.validators)((item,)),
+        "confirmation": booking_svc.confirm(guest, (item,)),
+    }
+
+
 def main() -> None:
     st.set_page_config(
-        page_title="Hotel FP System (Labs 1–5)",
+        page_title="Hotel FP System (Labs 1–7)",
         page_icon="🏨",
         layout="wide",
         initial_sidebar_state="collapsed",
@@ -107,7 +156,7 @@ def main() -> None:
                 </div>
                 <div style="text-align: right;">
                     <span style="background: #0369a1; color: #e0f2fe; padding: 0.35rem 0.75rem; border-radius: 9999px; font-size: 0.8rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em;">
-                        Lab 1 + Lab 2 + Lab 3 + Lab 4 + Lab 5
+                        Lab 1 – Lab 7
                     </span>
                 </div>
             </div>
@@ -117,6 +166,10 @@ def main() -> None:
     )
 
     hotels, room_types, rate_plans, prices, availabilities, guests = get_seed_data()
+    services = build_services(
+        room_types, rate_plans, prices, availabilities, DEFAULT_RULES
+    )
+    offers_args = (hotels, room_types, rate_plans, prices, availabilities)
 
     # Session state for cart simulation
     if "cart" not in st.session_state:
@@ -203,6 +256,24 @@ def main() -> None:
                 - **Stream Combinators**: `take_lazy` and `drop_lazy` for lazy pagination.
                 """)
 
+        c6, c7, _c8, _c9, _c10 = st.columns(5)
+        with c6:
+            st.markdown("""
+                ### 📡 Lab 6: FRP Event Bus
+                - **Immutable Bus**: `EventBus.subscribe/publish` return a new bus.
+                - **Events**: `SEARCH`, `HOLD`, `BOOKED`, `CANCELLED`, `PRICE_CHANGED`.
+                - **Pure Handlers**: `(Event, state) -> state`, no mutation.
+                - **Live Views**: active holds, latest bookings, price changes, occupancy.
+                """)
+        with c7:
+            st.markdown("""
+                ### 🧩 Lab 7: Composition & Services
+                - **Utilities**: `compose`, `pipe`, `all_of`, `rank_by`.
+                - **Facades**: `SearchService`, `QuoteService`, `BookingService`.
+                - **DI**: filters, scorers, quoter, validators, finalizer injected.
+                - **Flow**: Search -> Quote -> Confirmation with visible steps.
+                """)
+
     # ========================================================================
     # TAB 2: DATA EXPLORER
     # ========================================================================
@@ -280,6 +351,23 @@ def main() -> None:
     # ========================================================================
     with tabs[2]:
         st.subheader("Functional Core: Closures, Lambdas & Pure Recursion")
+
+        with st.expander("🧩 Composition: compose / pipe (Lab 7)", expanded=True):
+            st.write(
+                "`compose(f, g)(x) == f(g(x))` (right-to-left) and "
+                "`pipe(x, f, g) == g(f(x))` (left-to-right), built on `functools.reduce`."
+            )
+            comp_x = st.number_input("x", value=5, step=1, key="l7_compose_x")
+
+            def add_one(v: int) -> int:
+                return v + 1
+
+            def double(v: int) -> int:
+                return v * 2
+
+            cc1, cc2 = st.columns(2)
+            cc1.metric("compose(add_one, double)(x)", compose(add_one, double)(comp_x))
+            cc2.metric("pipe(x, add_one, double)", pipe(comp_x, add_one, double))
 
         c_left, c_right = st.columns([1, 1])
 
@@ -512,14 +600,106 @@ def main() -> None:
     with tabs[3]:
         st.subheader("Functional Pipelines & Memoization Engine")
 
-        p_tab1, p_tab2, p_tab3, p_tab4 = st.tabs(
+        p_tab1, p_tab2, p_tab3, p_tab4, p_tab5 = st.tabs(
             [
                 "Cart Hold Pipeline (Lab 1)",
                 "Memoized Pricing (Lab 3)",
                 "Speedup Benchmark (Lab 3)",
                 "Lazy Evaluation Streams (Lab 5)",
+                "Search -> Quote -> Confirm (Lab 7)",
             ]
         )
+
+        with p_tab5:
+            st.markdown(
+                "#### Search -> Quote -> Confirmation "
+                "(`SearchService`, `QuoteService`, `BookingService`)"
+            )
+            st.caption(
+                "Facades only compose injected pure functions. "
+                "Every numbered step below shows an intermediate result."
+            )
+            l7a, l7b, l7c, l7d, l7e = st.columns(5)
+            l7_city = l7a.selectbox(
+                "City", sorted({h.city for h in hotels}), key="l7_city"
+            )
+            l7_guests = l7b.number_input("Guests", 1, 4, 2, key="l7_guests")
+            l7_budget = l7c.number_input(
+                "Max total (KZT)",
+                10_000,
+                5_000_000,
+                400_000,
+                step=10_000,
+                key="l7_budget",
+            )
+            l7_cin = l7d.selectbox(
+                "Check-in",
+                tuple(lazy_calendar_stream("2026-06-01", 14)),
+                key="l7_cin",
+            )
+            l7_nights = l7e.slider("Nights", 1, 7, 3, key="l7_nights")
+            l7_cout = tuple(lazy_calendar_stream(l7_cin, l7_nights + 1))[-1]
+            l7_guest = st.selectbox(
+                "Guest",
+                guests,
+                format_func=lambda g: f"{g.id} - {g.name}",
+                key="l7_guest",
+            )
+
+            l7_ids = search_step(
+                services[0],
+                offers_args,
+                l7_city,
+                l7_guests,
+                l7_budget * 100,
+                l7_cin,
+                l7_cout,
+            )
+            st.markdown(f"##### 1. `SearchService.search` -> {len(l7_ids)} offer IDs")
+            if not l7_ids:
+                st.warning(
+                    "No offers match this request. Raise the budget or change dates."
+                )
+            else:
+                hotel_by_id = {h.id: h for h in hotels}
+                st.dataframe(
+                    [
+                        {
+                            "hotel": hotel_by_id[i[0]].name,
+                            "room_type_id": i[1],
+                            "rate_id": i[2],
+                        }
+                        for i in l7_ids
+                    ],
+                    width="stretch",
+                )
+                l7_pick = st.selectbox(
+                    "Pick an offer",
+                    l7_ids,
+                    format_func=lambda i: f"{hotel_by_id[i[0]].name} | {i[2]}",
+                    key="l7_pick",
+                )
+                steps = scenario_steps(
+                    services, l7_guest, l7_pick, l7_guests, l7_cin, l7_cout
+                )
+                st.markdown("##### 2. `QuoteService.quote`")
+                st.metric("Quoted total", format_cents(steps["quote"]))
+                st.markdown("##### 3. Validators (`validate_all`)")
+                if isinstance(steps["validation"], Right):
+                    st.success("Right(items): all validators passed")
+                else:
+                    st.error(f"Left: {steps['validation'].error.get('code')}")
+                    st.json(steps["validation"].error)
+                st.markdown("##### 4. `BookingService.confirm`")
+                conf = steps["confirmation"]
+                if isinstance(conf, Right):
+                    st.success(
+                        f"Right(Booking `{conf.value.id}`): "
+                        f"status `{conf.value.status}`, total {format_cents(conf.value.total)}"
+                    )
+                else:
+                    st.error(f"Left: {conf.error.get('code')}")
+                    st.json(conf.error)
 
         with p_tab1:
             st.markdown("#### Immutable Cart Management (`hold_item`, `remove_hold`)")
@@ -738,43 +918,165 @@ def main() -> None:
                     st.warning("No offers matched the lazy filter predicate.")
 
     # ========================================================================
-    # TAB 5: ASYNC / FRP (LABS 5–8 ROADMAP)
+    # TAB 5: ASYNC / FRP (LAB 6)
     # ========================================================================
     with tabs[4]:
-        st.subheader("Future Labs: Async, FRP, Composition & Reports (Labs 5–8)")
-        st.markdown(
-            """
-            <div style="background: #1e293b; border-left: 4px solid #38bdf8; padding: 1.5rem; border-radius: 8px; margin: 1rem 0;">
-                <h4 style="margin: 0 0 0.5rem 0; color: #f8fafc;">🔮 Planned Architecture for Future Labs:</h4>
-                <ul style="margin: 0; color: #cbd5e1; line-height: 1.8;">
-                    <li><strong>Lab 5:</strong> Lazy infinite streams, date and pricing generators (<code>core/lazy.py</code>).</li>
-                    <li><strong>Lab 6:</strong> Functional Reactive Programming (FRP), Observable event bus (<code>core/frp.py</code>).</li>
-                    <li><strong>Lab 7:</strong> Function composition pipelines and service layer (<code>core/compose.py</code>, <code>core/service.py</code>).</li>
-                    <li><strong>Lab 8:</strong> Analytical reports and metric aggregations (<code>core/report.py</code>).</li>
-                </ul>
-            </div>
-            """,
-            unsafe_allow_html=True,
+        st.subheader("FRP Event Bus: Live Views (Lab 6)")
+        st.caption(
+            "`EventBus.publish` returns a NEW bus; pure handlers fold the event "
+            "log into the views below. Async batch processing arrives in Lab 8."
         )
+        if "bus" not in st.session_state:
+            st.session_state.bus = default_bus()
 
-        c1, c2 = st.columns(2)
-        with c1:
-            st.markdown("""
-                ##### Future Modules Architecture:
-                - **Lab 5:** Infinite generators for date ranges and lazy price simulators.
-                - **Lab 6:** Observable streams for real-time price updates and cart holds.
-                - **Lab 7:** Currying, pipe combinators, and pure booking service layer.
-                - **Lab 8:** Pure financial reports derived from immutable `Event` streams.
-                """)
-        with c2:
-            st.markdown("""
-                ##### Modules Status (Clean Stubs):
-                - `core/lazy.py`: Lab 5 stub.
-                - `core/frp.py`: Lab 6 stub.
-                - `core/compose.py`: Lab 7 stub.
-                - `core/service.py`: Lab 7 stub.
-                - `core/report.py`: Lab 8 stub.
-                """)
+        rate_by_id = {r.id: r for r in rate_plans}
+        room_by_id = {r.id: r for r in room_types}
+        hotel_name = {h.id: h.name for h in hotels}
+
+        f1, f2, f3, f4 = st.columns(4)
+        f_city = f1.selectbox("City", sorted({h.city for h in hotels}), key="l6_city")
+        f_rate = f2.selectbox(
+            "Rate plan",
+            tuple(rate_by_id),
+            format_func=lambda rid: (
+                f"{hotel_name[room_by_id[rate_by_id[rid].room_type_id].hotel_id]}"
+                f" | {rid}"
+            ),
+            key="l6_rate",
+        )
+        f_cin = f3.selectbox(
+            "Check-in", tuple(lazy_calendar_stream("2026-06-01", 14)), key="l6_cin"
+        )
+        f_nights = f4.slider("Nights", 1, 4, 2, key="l6_nights")
+        f_cout = tuple(lazy_calendar_stream(f_cin, f_nights + 1))[-1]
+        f_guest = guests[0]
+
+        b1, b2, b3, b4, b5, b6 = st.columns(6)
+        bus = st.session_state.bus
+
+        if b1.button("🔍 SEARCH", key="l6_search"):
+            found = len(
+                search_step(services[0], offers_args, f_city, 1, 10**9, f_cin, f_cout)
+            )
+            bus = bus.publish("SEARCH", search_payload(f_city, 1, found))
+
+        if b2.button("📌 HOLD", key="l6_hold"):
+            draft = CartItem(
+                f"ci_{len(bus.log)}",
+                f_guest.id,
+                rate_by_id[f_rate].room_type_id,
+                f_rate,
+                f_cin,
+                f_cout,
+                1,
+                0,
+            )
+            held = dataclasses.replace(draft, total_price=services[1].quote(draft))
+            bus = bus.publish("HOLD", hold_payload(held))
+
+        if b3.button("✅ BOOKED", key="l6_booked"):
+            holds = bus.state["active_holds"]
+            if not holds:
+                st.warning("No active holds to book. Press HOLD first.")
+            else:
+                items = tuple(
+                    CartItem(
+                        h["item_id"],
+                        f_guest.id,
+                        h["room_type_id"],
+                        h["rate_id"],
+                        h["checkin"],
+                        h["checkout"],
+                        h["guests"],
+                        h["total"],
+                    )
+                    for h in holds
+                )
+                booking = Booking(
+                    f"bk_{len(bus.log)}",
+                    f_guest.id,
+                    items,
+                    calculate_cart_total(items),
+                )
+                bus = bus.publish("BOOKED", booking_payload(booking))
+
+        if b4.button("❌ CANCELLED", key="l6_cancel"):
+            live = tuple(
+                b for b in bus.state["latest_bookings"] if b["status"] == "confirmed"
+            )
+            if not live:
+                st.warning("No confirmed booking to cancel. Press BOOKED first.")
+            else:
+                bus = bus.publish(
+                    "CANCELLED",
+                    {"booking_id": live[0]["booking_id"], "items": live[0]["items"]},
+                )
+
+        if b5.button("💱 PRICE_CHANGED", key="l6_price"):
+            old = next(
+                (p.amount for p in prices if p.rate_id == f_rate and p.date == f_cin), 0
+            )
+            bus = bus.publish(
+                "PRICE_CHANGED",
+                price_change_payload(f_rate, f_cin, old, old * 110 // 100),
+            )
+
+        if b6.button("🧹 Reset", key="l6_reset"):
+            bus = default_bus()
+
+        st.session_state.bus = bus
+        view = bus.state
+
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Events in log", len(bus.log))
+        m2.metric("Searches", view["searches"])
+        m3.metric("Active holds", len(view["active_holds"]))
+        m4.metric("Booked room-nights", sum(view["occupancy"].values()))
+
+        v1, v2 = st.columns(2)
+        with v1:
+            st.markdown("##### 📌 Active holds")
+            if view["active_holds"]:
+                st.dataframe(list(view["active_holds"]), width="stretch")
+            else:
+                st.info("No active holds.")
+            st.markdown("##### 🗓️ Occupancy by date")
+            if view["occupancy"]:
+                st.dataframe(
+                    [
+                        {"date": d, "rooms": n}
+                        for d, n in sorted(view["occupancy"].items())
+                    ],
+                    width="stretch",
+                )
+            else:
+                st.info("No occupied nights.")
+        with v2:
+            st.markdown("##### 🧾 Latest bookings")
+            if view["latest_bookings"]:
+                st.dataframe(
+                    [
+                        {k: b[k] for k in ("booking_id", "status", "total", "ts")}
+                        for b in view["latest_bookings"]
+                    ],
+                    width="stretch",
+                )
+            else:
+                st.info("No bookings yet.")
+            st.markdown("##### 💱 Price changes")
+            if view["price_changes"]:
+                st.dataframe(list(view["price_changes"]), width="stretch")
+            else:
+                st.info("No price changes.")
+
+        st.markdown("##### 📜 Event log (newest first)")
+        st.dataframe(
+            [
+                {"ts": e.ts, "name": e.name, "payload": str(e.payload)}
+                for e in reversed(bus.log)
+            ],
+            width="stretch",
+        )
 
     # ========================================================================
     # TAB 6: REPORTS
@@ -782,260 +1084,311 @@ def main() -> None:
     with tabs[5]:
         st.subheader("Statistical Reports & Aggregations")
 
-        c1, c2 = st.columns(2)
-        with c1:
-            st.markdown("#### Hotel Distribution by City")
-            city_counts = {}
-            for h in hotels:
-                city_counts[h.city] = city_counts.get(h.city, 0) + 1
-            for city, count in city_counts.items():
-                st.write(f"• **{city}:** {count} hotels")
-
-        with c2:
-            st.markdown("#### Room Types by Capacity")
-            cap_counts = {}
-            for r in room_types:
-                cap_counts[r.capacity] = cap_counts.get(r.capacity, 0) + 1
-            for cap, count in sorted(cap_counts.items()):
-                st.write(f"• **{cap} Guests Capacity:** {count} room categories")
-
-        st.markdown("---")
-        st.write(
-            f"Average price per night across calendar: "
-            f"**{format_cents(sum(p.amount for p in prices) // len(prices))}**"
-        )
-
-        st.markdown("---")
-        st.markdown("### ⚡ Quotes (cached)")
-        st.write(
-            "Benchmark of combined functional pricing `quote_offer` "
-            "(`nightly_sum` + `recursive_apply_rules` + `check_dates_available_rec` under `@lru_cache`)."
-        )
-
-        n_req = st.slider(
-            "Number of Queries for Benchmark",
-            min_value=50,
-            max_value=500,
-            value=300,
-            step=50,
-            key="rep_quotes_cnt",
-        )
-        if st.button(
-            "🚀 Run quote_offer Benchmark (cached vs uncached)",
-            key="btn_rep_quote_offer",
-        ):
-            sample_rules = (
-                Rule(id="rule_rep_vip", kind="vip_discount", payload=(10,)),
-                Rule(id="rule_rep_early", kind="early_bird", payload=(14, 500000)),
-            )
-
-            rel_rate_ids = {rate_plans[i % len(rate_plans)].id for i in range(5)}
-            rel_room_ids = {room_types[i % len(room_types)].id for i in range(5)}
-            prices_idx = tuple(p for p in prices if p.rate_id in rel_rate_ids)
-            avails_idx = tuple(
-                a for a in availabilities if a.room_type_id in rel_room_ids
-            )
-
-            query_tuples = tuple(
-                (
-                    hotels[i % len(hotels)].id,
-                    room_types[i % 5].id,
-                    rate_plans[i % 5].id,
-                    "2026-06-01",
-                    "2026-06-10",
-                    prices_idx,
-                    avails_idx,
-                    sample_rules,
-                )
-                for i in range(5)
-            )
-
-            # Uncached run
-            t0 = time.perf_counter()
-            for i in range(n_req):
-                q = query_tuples[i % len(query_tuples)]
-                sample_res = quote_offer_unmemoized(*q)
-            t_uncached = time.perf_counter() - t0
-
-            # Cached run
-            quote_offer.cache_clear()
-            t1 = time.perf_counter()
-            for i in range(n_req):
-                q = query_tuples[i % len(query_tuples)]
-                sample_res = quote_offer(*q)
-            t_cached = time.perf_counter() - t1
-
-            speedup = (t_uncached / t_cached) if t_cached > 0 else 1.0
-            info = quote_offer.cache_info()
-
-            qc1, qc2, qc3, qc4 = st.columns(4)
-            with qc1:
-                st.metric("Uncached Time", f"{t_uncached * 1000:.2f} ms")
-            with qc2:
-                st.metric("Cached Time (LRU)", f"{t_cached * 1000:.2f} ms")
-            with qc3:
-                st.metric("Speedup Factor", f"{speedup:.1f}x")
-            with qc4:
-                st.metric("Cache Hits", f"{info.hits} / {n_req}")
-
-            st.success(
-                f"**Sample Result:** `(total_amount={format_cents(sample_res[0])}, is_available={sample_res[1]})` "
-                f"&mdash; tuple: `({sample_res[0]}, {sample_res[1]})`"
-            )
-
-        st.markdown("---")
-        st.markdown("### 🛡️ Validate & Calculate Booking (Lab 4)")
-        st.write(
-            "Pure monadic booking pipeline (`Either[dict, Booking]`) without `try`/`except`. "
-            "Reuses `quote_offer` for price recalculation and strict validation."
-        )
-
-        scenario_name = st.selectbox(
-            "Select validation scenario",
+        r_tabs = st.tabs(
             [
-                "1. Valid Booking (Right[Booking])",
-                "2. Capacity Exceeded (Left: capacity_exceeded)",
-                "3. Unavailable Dates (Left: date_unavailable)",
-                "4. Invalid Date Range (Left: invalid_date_range)",
-                "5. Empty Cart (Left: empty_booking)",
-            ],
-            key="l4_rep_sel_scenario",
+                "Statistics",
+                "Quotes (cached, Lab 3)",
+                "Validation (Lab 4)",
+                "Lazy Streams (Lab 5)",
+                "Services (Lab 7)",
+            ]
         )
 
-        if st.button(
-            "🚀 Run Validation Scenario (Pure Either)",
-            key="l4_rep_btn_run_scenario",
-        ):
-            guest_sample = guests[0]
-            if "1. Valid" in scenario_name:
-                item = CartItem(
-                    id="cart_rep_valid",
-                    guest_id=guest_sample.id,
-                    room_type_id=room_types[0].id,
-                    rate_id=rate_plans[0].id,
-                    checkin="2026-06-01",
-                    checkout="2026-06-04",
-                    guests_count=1,
-                    total_price=0,
-                )
-                items_tuple = (item,)
-                avails_tuple = availabilities
-            elif "2. Capacity" in scenario_name:
-                item = CartItem(
-                    id="cart_rep_overcap",
-                    guest_id=guest_sample.id,
-                    room_type_id=room_types[0].id,
-                    rate_id=rate_plans[0].id,
-                    checkin="2026-06-01",
-                    checkout="2026-06-04",
-                    guests_count=room_types[0].capacity + 5,
-                    total_price=0,
-                )
-                items_tuple = (item,)
-                avails_tuple = availabilities
-            elif "3. Unavailable" in scenario_name:
-                item = CartItem(
-                    id="cart_rep_unavail",
-                    guest_id=guest_sample.id,
-                    room_type_id=room_types[0].id,
-                    rate_id=rate_plans[0].id,
-                    checkin="2026-06-01",
-                    checkout="2026-06-04",
-                    guests_count=1,
-                    total_price=0,
-                )
-                items_tuple = (item,)
-                avails_tuple = ()  # No availability
-            elif "4. Invalid" in scenario_name:
-                item = CartItem(
-                    id="cart_rep_invdates",
-                    guest_id=guest_sample.id,
-                    room_type_id=room_types[0].id,
-                    rate_id=rate_plans[0].id,
-                    checkin="2026-06-08",
-                    checkout="2026-06-02",  # Checkout before checkin
-                    guests_count=1,
-                    total_price=0,
-                )
-                items_tuple = (item,)
-                avails_tuple = availabilities
-            else:  # Empty cart
-                items_tuple = ()
-                avails_tuple = availabilities
+        with r_tabs[0]:
+            c1, c2 = st.columns(2)
+            with c1:
+                st.markdown("#### Hotel Distribution by City")
+                city_counts = {}
+                for h in hotels:
+                    city_counts[h.city] = city_counts.get(h.city, 0) + 1
+                for city, count in city_counts.items():
+                    st.write(f"• **{city}:** {count} hotels")
 
-            res_scenario = validate_and_calculate_booking(
-                booking_id="bk_rep_l4",
-                guest=guest_sample,
-                items=items_tuple,
-                prices=prices,
-                availability=avails_tuple,
-                rules=DEFAULT_RULES,
-                room_types=room_types,
-                rates=rate_plans,
+            with c2:
+                st.markdown("#### Room Types by Capacity")
+                cap_counts = {}
+                for r in room_types:
+                    cap_counts[r.capacity] = cap_counts.get(r.capacity, 0) + 1
+                for cap, count in sorted(cap_counts.items()):
+                    st.write(f"• **{cap} Guests Capacity:** {count} room categories")
+
+            st.write(
+                f"Average price per night across calendar: "
+                f"**{format_cents(sum(p.amount for p in prices) // len(prices))}**"
             )
 
-            if isinstance(res_scenario, Right):
-                bk = res_scenario.value
-                st.success("✅ Validation Succeeded! Container: `Right(Booking)`")
-                sc1, sc2, sc3 = st.columns(3)
-                with sc1:
-                    st.metric("Booking ID", bk.id)
-                with sc2:
-                    st.metric("Guest", guest_sample.name)
-                with sc3:
-                    st.metric("Total Amount", format_cents(bk.total))
-                st.write(f"• Status: `{bk.status}` &middot; Items: `{len(bk.items)}`")
-            elif isinstance(res_scenario, Left):
-                err = res_scenario.error
-                st.error("❌ Validation Rejected! Container: `Left(error)`")
-                st.write(f"• **Error Code:** `{err.get('code')}`")
-                st.write(f"• **Message:** {err.get('message')}")
-                st.json(err)
-
-        st.markdown("---")
-        st.markdown("### ⏳ Lazy Stream Sampling & Top-K Offers (Lab 5)")
-        st.write(
-            "Lazy generator evaluation for Reports: sample continuous calendar dates "
-            "or stream the top-K matching hotel offers on demand without materializing the full dataset."
-        )
-
-        r_lz_col1, r_lz_col2 = st.columns(2)
-        with r_lz_col1:
-            st.markdown("##### 📅 Lazy Infinite Calendar Stream")
-            st.caption("Uses `lazy_calendar_stream` + `take_lazy`")
-            sample_days_cnt = st.slider(
-                "Number of Days to Sample", 3, 21, 7, key="l5_rep_slider_days"
+        with r_tabs[1]:
+            st.markdown("### ⚡ Quotes (cached)")
+            st.write(
+                "Benchmark of combined functional pricing `quote_offer` "
+                "(`nightly_sum` + `recursive_apply_rules` + `check_dates_available_rec` under `@lru_cache`)."
             )
-            if st.button("Generate Date Stream Sample", key="l5_rep_btn_stream_dates"):
-                sampled_dates = tuple(
-                    take_lazy(lazy_calendar_stream("2026-06-01"), sample_days_cnt)
-                )
-                st.success(f"Streamed {len(sampled_dates)} calendar days on demand:")
-                st.code(" -> ".join(sampled_dates), language="text")
 
-        with r_lz_col2:
-            st.markdown("##### 🏆 First K Budget Offers (Lazy Stream)")
-            st.caption("Uses `lazy_offers` + `take_lazy`")
-            k_offers_cnt = st.slider("Top K Offers", 1, 8, 3, key="l5_rep_slider_k")
-            if st.button("Sample Top K Offers Lazily", key="l5_rep_btn_sample_offers"):
-                offer_gen = lazy_offers(
-                    hotels=hotels,
+            n_req = st.slider(
+                "Number of Queries for Benchmark",
+                min_value=50,
+                max_value=500,
+                value=300,
+                step=50,
+                key="rep_quotes_cnt",
+            )
+            if st.button(
+                "🚀 Run quote_offer Benchmark (cached vs uncached)",
+                key="btn_rep_quote_offer",
+            ):
+                sample_rules = (
+                    Rule(id="rule_rep_vip", kind="vip_discount", payload=(10,)),
+                    Rule(id="rule_rep_early", kind="early_bird", payload=(14, 500000)),
+                )
+
+                rel_rate_ids = {rate_plans[i % len(rate_plans)].id for i in range(5)}
+                rel_room_ids = {room_types[i % len(room_types)].id for i in range(5)}
+                prices_idx = tuple(p for p in prices if p.rate_id in rel_rate_ids)
+                avails_idx = tuple(
+                    a for a in availabilities if a.room_type_id in rel_room_ids
+                )
+
+                query_tuples = tuple(
+                    (
+                        hotels[i % len(hotels)].id,
+                        room_types[i % 5].id,
+                        rate_plans[i % 5].id,
+                        "2026-06-01",
+                        "2026-06-10",
+                        prices_idx,
+                        avails_idx,
+                        sample_rules,
+                    )
+                    for i in range(5)
+                )
+
+                # Uncached run
+                t0 = time.perf_counter()
+                for i in range(n_req):
+                    q = query_tuples[i % len(query_tuples)]
+                    sample_res = quote_offer_unmemoized(*q)
+                t_uncached = time.perf_counter() - t0
+
+                # Cached run
+                quote_offer.cache_clear()
+                t1 = time.perf_counter()
+                for i in range(n_req):
+                    q = query_tuples[i % len(query_tuples)]
+                    sample_res = quote_offer(*q)
+                t_cached = time.perf_counter() - t1
+
+                speedup = (t_uncached / t_cached) if t_cached > 0 else 1.0
+                info = quote_offer.cache_info()
+
+                qc1, qc2, qc3, qc4 = st.columns(4)
+                with qc1:
+                    st.metric("Uncached Time", f"{t_uncached * 1000:.2f} ms")
+                with qc2:
+                    st.metric("Cached Time (LRU)", f"{t_cached * 1000:.2f} ms")
+                with qc3:
+                    st.metric("Speedup Factor", f"{speedup:.1f}x")
+                with qc4:
+                    st.metric("Cache Hits", f"{info.hits} / {n_req}")
+
+                st.success(
+                    f"**Sample Result:** `(total_amount={format_cents(sample_res[0])}, is_available={sample_res[1]})` "
+                    f"&mdash; tuple: `({sample_res[0]}, {sample_res[1]})`"
+                )
+
+        with r_tabs[2]:
+            st.markdown("### 🛡️ Validate & Calculate Booking (Lab 4)")
+            st.write(
+                "Pure monadic booking pipeline (`Either[dict, Booking]`) without `try`/`except`. "
+                "Reuses `quote_offer` for price recalculation and strict validation."
+            )
+
+            scenario_name = st.selectbox(
+                "Select validation scenario",
+                [
+                    "1. Valid Booking (Right[Booking])",
+                    "2. Capacity Exceeded (Left: capacity_exceeded)",
+                    "3. Unavailable Dates (Left: date_unavailable)",
+                    "4. Invalid Date Range (Left: invalid_date_range)",
+                    "5. Empty Cart (Left: empty_booking)",
+                ],
+                key="l4_rep_sel_scenario",
+            )
+
+            if st.button(
+                "🚀 Run Validation Scenario (Pure Either)",
+                key="l4_rep_btn_run_scenario",
+            ):
+                guest_sample = guests[0]
+                if "1. Valid" in scenario_name:
+                    item = CartItem(
+                        id="cart_rep_valid",
+                        guest_id=guest_sample.id,
+                        room_type_id=room_types[0].id,
+                        rate_id=rate_plans[0].id,
+                        checkin="2026-06-01",
+                        checkout="2026-06-04",
+                        guests_count=1,
+                        total_price=0,
+                    )
+                    items_tuple = (item,)
+                    avails_tuple = availabilities
+                elif "2. Capacity" in scenario_name:
+                    item = CartItem(
+                        id="cart_rep_overcap",
+                        guest_id=guest_sample.id,
+                        room_type_id=room_types[0].id,
+                        rate_id=rate_plans[0].id,
+                        checkin="2026-06-01",
+                        checkout="2026-06-04",
+                        guests_count=room_types[0].capacity + 5,
+                        total_price=0,
+                    )
+                    items_tuple = (item,)
+                    avails_tuple = availabilities
+                elif "3. Unavailable" in scenario_name:
+                    item = CartItem(
+                        id="cart_rep_unavail",
+                        guest_id=guest_sample.id,
+                        room_type_id=room_types[0].id,
+                        rate_id=rate_plans[0].id,
+                        checkin="2026-06-01",
+                        checkout="2026-06-04",
+                        guests_count=1,
+                        total_price=0,
+                    )
+                    items_tuple = (item,)
+                    avails_tuple = ()  # No availability
+                elif "4. Invalid" in scenario_name:
+                    item = CartItem(
+                        id="cart_rep_invdates",
+                        guest_id=guest_sample.id,
+                        room_type_id=room_types[0].id,
+                        rate_id=rate_plans[0].id,
+                        checkin="2026-06-08",
+                        checkout="2026-06-02",  # Checkout before checkin
+                        guests_count=1,
+                        total_price=0,
+                    )
+                    items_tuple = (item,)
+                    avails_tuple = availabilities
+                else:  # Empty cart
+                    items_tuple = ()
+                    avails_tuple = availabilities
+
+                res_scenario = validate_and_calculate_booking(
+                    booking_id="bk_rep_l4",
+                    guest=guest_sample,
+                    items=items_tuple,
+                    prices=prices,
+                    availability=avails_tuple,
+                    rules=DEFAULT_RULES,
                     room_types=room_types,
                     rates=rate_plans,
-                    prices=prices,
-                    avail=availabilities,
-                    predicate=lambda h, r, rt, p: p <= 9000000,
-                    checkin="2026-06-01",
-                    checkout="2026-06-04",
                 )
-                sampled_offers = tuple(take_lazy(offer_gen, k_offers_cnt))
-                st.success(
-                    f"Yielded {len(sampled_offers)} offers lazily (budget ≤ 90,000 KZT):"
-                )
-                for i, (h, r, rt, p) in enumerate(sampled_offers, 1):
+
+                if isinstance(res_scenario, Right):
+                    bk = res_scenario.value
+                    st.success("✅ Validation Succeeded! Container: `Right(Booking)`")
+                    sc1, sc2, sc3 = st.columns(3)
+                    with sc1:
+                        st.metric("Booking ID", bk.id)
+                    with sc2:
+                        st.metric("Guest", guest_sample.name)
+                    with sc3:
+                        st.metric("Total Amount", format_cents(bk.total))
                     st.write(
-                        f"**{i}. {h.name}** ({h.city}) &middot; *{r.name}* &middot; Plan: `{rt.name or rt.title}` &middot; **{format_cents(p)}**"
+                        f"• Status: `{bk.status}` &middot; Items: `{len(bk.items)}`"
                     )
+                elif isinstance(res_scenario, Left):
+                    err = res_scenario.error
+                    st.error("❌ Validation Rejected! Container: `Left(error)`")
+                    st.write(f"• **Error Code:** `{err.get('code')}`")
+                    st.write(f"• **Message:** {err.get('message')}")
+                    st.json(err)
+
+        with r_tabs[3]:
+            st.markdown("### ⏳ Lazy Stream Sampling & Top-K Offers (Lab 5)")
+            st.write(
+                "Lazy generator evaluation for Reports: sample continuous calendar dates "
+                "or stream the top-K matching hotel offers on demand without materializing the full dataset."
+            )
+
+            r_lz_col1, r_lz_col2 = st.columns(2)
+            with r_lz_col1:
+                st.markdown("##### 📅 Lazy Infinite Calendar Stream")
+                st.caption("Uses `lazy_calendar_stream` + `take_lazy`")
+                sample_days_cnt = st.slider(
+                    "Number of Days to Sample", 3, 21, 7, key="l5_rep_slider_days"
+                )
+                if st.button(
+                    "Generate Date Stream Sample", key="l5_rep_btn_stream_dates"
+                ):
+                    sampled_dates = tuple(
+                        take_lazy(lazy_calendar_stream("2026-06-01"), sample_days_cnt)
+                    )
+                    st.success(
+                        f"Streamed {len(sampled_dates)} calendar days on demand:"
+                    )
+                    st.code(" -> ".join(sampled_dates), language="text")
+
+            with r_lz_col2:
+                st.markdown("##### 🏆 First K Budget Offers (Lazy Stream)")
+                st.caption("Uses `lazy_offers` + `take_lazy`")
+                k_offers_cnt = st.slider("Top K Offers", 1, 8, 3, key="l5_rep_slider_k")
+                if st.button(
+                    "Sample Top K Offers Lazily", key="l5_rep_btn_sample_offers"
+                ):
+                    offer_gen = lazy_offers(
+                        hotels=hotels,
+                        room_types=room_types,
+                        rates=rate_plans,
+                        prices=prices,
+                        avail=availabilities,
+                        predicate=lambda h, r, rt, p: p <= 9000000,
+                        checkin="2026-06-01",
+                        checkout="2026-06-04",
+                    )
+                    sampled_offers = tuple(take_lazy(offer_gen, k_offers_cnt))
+                    st.success(
+                        f"Yielded {len(sampled_offers)} offers lazily (budget ≤ 90,000 KZT):"
+                    )
+                    for i, (h, r, rt, p) in enumerate(sampled_offers, 1):
+                        st.write(
+                            f"**{i}. {h.name}** ({h.city}) &middot; *{r.name}* &middot; Plan: `{rt.name or rt.title}` &middot; **{format_cents(p)}**"
+                        )
+
+        with r_tabs[4]:
+            st.markdown("### 🧩 Service Facades Summary (Lab 7)")
+            st.write(
+                "Default scenario run through `SearchService` -> `QuoteService` -> "
+                "`BookingService` with dependencies wired in `build_services` "
+                "(the composition root)."
+            )
+            rep_city = sorted({h.city for h in hotels})[0]
+            rep_cin, rep_cout = "2026-06-01", "2026-06-04"
+            rep_ids = search_step(
+                services[0], offers_args, rep_city, 2, 10**9, rep_cin, rep_cout
+            )
+            rc1, rc2, rc3, rc4 = st.columns(4)
+            rc1.metric("City / guests", f"{rep_city} / 2")
+            rc2.metric("Offers found (limit 8)", len(rep_ids))
+            if rep_ids:
+                rep_steps = scenario_steps(
+                    services, guests[0], rep_ids[0], 2, rep_cin, rep_cout
+                )
+                rc3.metric("Top offer quote", format_cents(rep_steps["quote"]))
+                rep_conf = rep_steps["confirmation"]
+                rc4.metric(
+                    "Confirmation",
+                    "Right(Booking)" if isinstance(rep_conf, Right) else "Left(error)",
+                )
+            st.markdown("""
+                | Facade | Injected dependencies | Pure functions it composes |
+                |---|---|---|
+                | `SearchService` | `filters`, `scorers` | `by_city`, `by_capacity`, `by_features`, `lazy_filter`, `rank_by` |
+                | `QuoteService` | `quoter` | memoized `quote_offer` |
+                | `BookingService` | `validators`, `quoter`, `finalizer` | `validate_cart_item`, `validate_booking`, `Either.bind/map` |
+                """)
 
     # ========================================================================
     # TAB 7: TESTS RUNNER
@@ -1043,7 +1396,7 @@ def main() -> None:
     with tabs[6]:
         st.subheader("Automated Test Suite Runner")
         st.write(
-            "Run pytest against lab test suites (`tests/test_lab1.py`, `tests/test_lab2.py`, `tests/test_lab3.py`, `tests/test_lab4.py`)."
+            "Run pytest against lab test suites (`tests/test_lab1.py` .. `tests/test_lab7.py`)."
         )
 
         col_sel, col_btn = st.columns([2, 1])
@@ -1051,12 +1404,14 @@ def main() -> None:
             test_target = st.selectbox(
                 "Select Test Suite",
                 [
-                    "All Labs (Labs 1–5)",
+                    "All Labs (Labs 1–7)",
                     "Lab 1 (Domain & Transforms)",
                     "Lab 2 (Closures & Recursion)",
                     "Lab 3 (Memoization & Benchmarks)",
                     "Lab 4 (Monads & Pure Validation)",
                     "Lab 5 (Lazy Streams & Evaluation)",
+                    "Lab 6 (FRP Event Bus)",
+                    "Lab 7 (Composition & Services)",
                 ],
             )
 
@@ -1077,6 +1432,10 @@ def main() -> None:
                 target_file = "tests/test_lab4.py"
             elif "Lab 5" in test_target:
                 target_file = "tests/test_lab5.py"
+            elif "Lab 6" in test_target:
+                target_file = "tests/test_lab6.py"
+            elif "Lab 7" in test_target:
+                target_file = "tests/test_lab7.py"
 
             with st.spinner(f"Running pytest {target_file}..."):
                 proc = subprocess.run(
@@ -1112,6 +1471,9 @@ def main() -> None:
                - `tests/test_lab2.py`: Tests for Lab 2 (Closures, Lambdas, Recursion)
                - `tests/test_lab3.py`: Tests for Lab 3 (Memoization & Benchmarks)
                - `tests/test_lab4.py`: Tests for Lab 4 (Monads & Pure Validation Pipelines)
+               - `tests/test_lab5.py`: Tests for Lab 5 (Lazy Evaluation)
+               - `tests/test_lab6.py`: Tests for Lab 6 (FRP Event Bus)
+               - `tests/test_lab7.py`: Tests for Lab 7 (Composition & Services)
             """)
 
 
